@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solidity Security Skill Benchmark</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --red: #f85149;
+            --yellow: #d29922;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+        .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+        .stats-row {
+            display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            min-width: 150px;
+        }
+        .stat-card .value { font-size: 1.5rem; font-weight: 600; }
+        .stat-card .label { color: var(--text-muted); font-size: 0.85rem; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 2rem;
+        }
+        th, td { padding: 0.75rem 1rem; text-align: left; }
+        th {
+            background: var(--bg);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover { color: var(--accent); }
+        td { border-top: 1px solid var(--border); }
+        tr:hover td { background: rgba(88, 166, 255, 0.05); }
+
+        .rank { font-weight: 700; color: var(--accent); }
+        .rank-1 { color: #ffd700; }
+        .rank-2 { color: #c0c0c0; }
+        .rank-3 { color: #cd7f32; }
+
+        .metric { font-variant-numeric: tabular-nums; }
+        .good { color: var(--green); }
+        .mid { color: var(--yellow); }
+        .bad { color: var(--red); }
+
+        .bar-container {
+            width: 100px; height: 8px; background: var(--border);
+            border-radius: 4px; display: inline-block; vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+        .bar {
+            height: 100%; border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .detail-panel {
+            display: none;
+            background: var(--bg);
+            border-top: 1px solid var(--border);
+        }
+        .detail-panel.open { display: table-row; }
+        .detail-content {
+            padding: 1rem;
+        }
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 0.5rem;
+        }
+        .detail-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.85rem;
+        }
+        .detail-item .eval-name { font-weight: 600; }
+        .detail-item .eval-score { color: var(--text-muted); }
+
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-muted);
+        }
+        .empty-state h2 { margin-bottom: 1rem; }
+        .empty-state code {
+            background: var(--surface);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            display: inline-block;
+            margin: 0.5rem 0;
+        }
+
+        .timestamp {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Solidity Security Skill Benchmark</h1>
+    <p class="subtitle">Comparing SKILL.md files on their ability to find known smart contract vulnerabilities</p>
+
+    <div id="stats-row" class="stats-row"></div>
+    <div id="leaderboard"></div>
+    <div id="timestamp" class="timestamp"></div>
+
+    <script>
+    async function loadData() {
+        try {
+            const resp = await fetch('data.json');
+            if (!resp.ok) throw new Error('No data yet');
+            return await resp.json();
+        } catch {
+            return null;
+        }
+    }
+
+    function colorClass(value) {
+        if (value >= 0.7) return 'good';
+        if (value >= 0.4) return 'mid';
+        return 'bad';
+    }
+
+    function barColor(value) {
+        if (value >= 0.7) return 'var(--green)';
+        if (value >= 0.4) return 'var(--yellow)';
+        return 'var(--red)';
+    }
+
+    function pct(value) {
+        return (value * 100).toFixed(1) + '%';
+    }
+
+    function renderBar(value) {
+        return `<span class="bar-container"><span class="bar" style="width:${value*100}%;background:${barColor(value)}"></span></span><span class="metric ${colorClass(value)}">${pct(value)}</span>`;
+    }
+
+    function rankClass(rank) {
+        if (rank <= 3) return `rank rank-${rank}`;
+        return 'rank';
+    }
+
+    function render(data) {
+        if (!data || !data.leaderboard || data.leaderboard.length === 0) {
+            document.getElementById('leaderboard').innerHTML = `
+                <div class="empty-state">
+                    <h2>No benchmark results yet</h2>
+                    <p>Run your first benchmark:</p>
+                    <code>./scripts/run_benchmark.sh skills/my-skill.md --sample 5</code>
+                </div>`;
+            return;
+        }
+
+        // Stats
+        const totalFindings = data.leaderboard.reduce((sum, s) =>
+            sum + s.per_eval.reduce((s2, e) => s2 + e.total, 0), 0);
+
+        document.getElementById('stats-row').innerHTML = `
+            <div class="stat-card"><div class="value">${data.total_skills}</div><div class="label">Skills Tested</div></div>
+            <div class="stat-card"><div class="value">${data.total_evals_available}</div><div class="label">Evals Available</div></div>
+            <div class="stat-card"><div class="value">${data.leaderboard[0]?.evals_run || 0}</div><div class="label">Evals Run (top skill)</div></div>
+            <div class="stat-card"><div class="value">${pct(data.leaderboard[0]?.f1?.mean || 0)}</div><div class="label">Best F1 Score</div></div>
+        `;
+
+        // Table
+        let html = `<table>
+            <thead><tr>
+                <th>Rank</th>
+                <th>Skill</th>
+                <th>F1 Score</th>
+                <th>Recall</th>
+                <th>Precision</th>
+                <th>Evals</th>
+            </tr></thead><tbody>`;
+
+        for (const entry of data.leaderboard) {
+            const id = entry.skill.replace(/[^a-z0-9]/gi, '_');
+            html += `<tr onclick="toggleDetail('${id}')" style="cursor:pointer">
+                <td><span class="${rankClass(entry.rank)}">#${entry.rank}</span></td>
+                <td><strong>${entry.skill}</strong></td>
+                <td>${renderBar(entry.f1.mean)}</td>
+                <td>${renderBar(entry.recall.mean)}</td>
+                <td>${renderBar(entry.precision.mean)}</td>
+                <td class="metric">${entry.evals_run}</td>
+            </tr>`;
+
+            // Detail row
+            html += `<tr class="detail-panel" id="detail-${id}"><td colspan="6"><div class="detail-content">
+                <p style="margin-bottom:0.5rem;color:var(--text-muted)">
+                    F1: ${pct(entry.f1.mean)} +/- ${pct(entry.f1.stddev)} |
+                    Recall: ${pct(entry.recall.mean)} +/- ${pct(entry.recall.stddev)} |
+                    Precision: ${pct(entry.precision.mean)} +/- ${pct(entry.precision.stddev)}
+                </p>
+                <div class="detail-grid">`;
+
+            for (const e of entry.per_eval) {
+                html += `<div class="detail-item">
+                    <div class="eval-name">${e.eval_id}</div>
+                    <div class="eval-score">
+                        ${e.found}/${e.total} found |
+                        F1: <span class="${colorClass(e.f1)}">${pct(e.f1)}</span> |
+                        FP: ${e.false_positives}
+                    </div>
+                </div>`;
+            }
+
+            html += `</div></div></td></tr>`;
+        }
+
+        html += '</tbody></table>';
+        document.getElementById('leaderboard').innerHTML = html;
+        document.getElementById('timestamp').textContent = `Last updated: ${data.generated_at}`;
+    }
+
+    function toggleDetail(id) {
+        const el = document.getElementById('detail-' + id);
+        el.classList.toggle('open');
+    }
+
+    loadData().then(render);
+    </script>
+</body>
+</html>

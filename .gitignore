@@ -1,0 +1,18 @@
+# Large run outputs - track results/benchmark.json and history, not raw runs
+results/runs/
+
+# Site data is generated
+site/data.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+
+evals/
+results/

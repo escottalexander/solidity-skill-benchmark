@@ -1,0 +1,640 @@
+{
+  "description": "Skill manifest for the Solidity security audit benchmark. Each entry maps a readable name to a SKILL.md path. Set enabled=true for skills to include in benchmarks.",
+  "skills": {
+    "ethskills": {
+      "path": "skills/ethskills/SKILL.md",
+      "enabled": false,
+      "description": "name: ethskills"
+    },
+    "ethskills/addresses": {
+      "path": "skills/ethskills/addresses/SKILL.md",
+      "enabled": false,
+      "description": "name: addresses"
+    },
+    "ethskills/audit": {
+      "path": "skills/ethskills/audit/SKILL.md",
+      "enabled": true,
+      "description": "name: audit"
+    },
+    "ethskills/building-blocks": {
+      "path": "skills/ethskills/building-blocks/SKILL.md",
+      "enabled": false,
+      "description": "name: building-blocks"
+    },
+    "ethskills/concepts": {
+      "path": "skills/ethskills/concepts/SKILL.md",
+      "enabled": false,
+      "description": "name: concepts"
+    },
+    "ethskills/contracts": {
+      "path": "skills/ethskills/contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: contracts"
+    },
+    "ethskills/defi": {
+      "path": "skills/ethskills/defi/SKILL.md",
+      "enabled": false,
+      "description": "name: defi"
+    },
+    "ethskills/frontend-playbook": {
+      "path": "skills/ethskills/frontend-playbook/SKILL.md",
+      "enabled": false,
+      "description": "name: frontend-playbook"
+    },
+    "ethskills/frontend-ux": {
+      "path": "skills/ethskills/frontend-ux/SKILL.md",
+      "enabled": false,
+      "description": "name: frontend-ux"
+    },
+    "ethskills/gas": {
+      "path": "skills/ethskills/gas/SKILL.md",
+      "enabled": false,
+      "description": "name: gas"
+    },
+    "ethskills/indexing": {
+      "path": "skills/ethskills/indexing/SKILL.md",
+      "enabled": false,
+      "description": "name: indexing"
+    },
+    "ethskills/l2": {
+      "path": "skills/ethskills/l2/SKILL.md",
+      "enabled": false,
+      "description": "name: l2"
+    },
+    "ethskills/l2s": {
+      "path": "skills/ethskills/l2s/SKILL.md",
+      "enabled": false,
+      "description": "name: l2s"
+    },
+    "ethskills/layer2": {
+      "path": "skills/ethskills/layer2/SKILL.md",
+      "enabled": false,
+      "description": "name: layer2"
+    },
+    "ethskills/openclaw-skill": {
+      "path": "skills/ethskills/openclaw-skill/SKILL.md",
+      "enabled": false,
+      "description": "name: ethskills"
+    },
+    "ethskills/orchestration": {
+      "path": "skills/ethskills/orchestration/SKILL.md",
+      "enabled": false,
+      "description": "name: orchestration"
+    },
+    "ethskills/protocol": {
+      "path": "skills/ethskills/protocol/SKILL.md",
+      "enabled": false,
+      "description": "name: protocol"
+    },
+    "ethskills/qa": {
+      "path": "skills/ethskills/qa/SKILL.md",
+      "enabled": false,
+      "description": "name: qa"
+    },
+    "ethskills/security": {
+      "path": "skills/ethskills/security/SKILL.md",
+      "enabled": true,
+      "description": "name: security"
+    },
+    "ethskills/ship": {
+      "path": "skills/ethskills/ship/SKILL.md",
+      "enabled": false,
+      "description": "name: ship"
+    },
+    "ethskills/standards": {
+      "path": "skills/ethskills/standards/SKILL.md",
+      "enabled": false,
+      "description": "name: standards"
+    },
+    "ethskills/testing": {
+      "path": "skills/ethskills/testing/SKILL.md",
+      "enabled": false,
+      "description": "name: testing"
+    },
+    "ethskills/tools": {
+      "path": "skills/ethskills/tools/SKILL.md",
+      "enabled": false,
+      "description": "name: tools"
+    },
+    "ethskills/wallets": {
+      "path": "skills/ethskills/wallets/SKILL.md",
+      "enabled": false,
+      "description": "name: wallets"
+    },
+    "ethskills/why": {
+      "path": "skills/ethskills/why/SKILL.md",
+      "enabled": false,
+      "description": "name: why-ethereum"
+    },
+    "hackenproof-skills/hackenproof-bulk-triage": {
+      "path": "skills/hackenproof-skills/plugins/hackenproof-bulk-triage/skills/hackenproof-bulk-triage/SKILL.md",
+      "enabled": false,
+      "description": "name: hackenproof-bulk-triage"
+    },
+    "hackenproof-skills/hackenproof-triage-marketplace": {
+      "path": "skills/hackenproof-skills/plugins/hackenproof-triage/skills/hackenproof-triage-marketplace/SKILL.md",
+      "enabled": false,
+      "description": "name: hackenproof-triage-marketplace"
+    },
+    "openzeppelin-skills/develop-secure-contracts": {
+      "path": "skills/openzeppelin-skills/skills/develop-secure-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: develop-secure-contracts"
+    },
+    "openzeppelin-skills/setup-cairo-contracts": {
+      "path": "skills/openzeppelin-skills/skills/setup-cairo-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: setup-cairo-contracts"
+    },
+    "openzeppelin-skills/setup-solidity-contracts": {
+      "path": "skills/openzeppelin-skills/skills/setup-solidity-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: setup-solidity-contracts"
+    },
+    "openzeppelin-skills/setup-stellar-contracts": {
+      "path": "skills/openzeppelin-skills/skills/setup-stellar-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: setup-stellar-contracts"
+    },
+    "openzeppelin-skills/setup-stylus-contracts": {
+      "path": "skills/openzeppelin-skills/skills/setup-stylus-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: setup-stylus-contracts"
+    },
+    "openzeppelin-skills/upgrade-cairo-contracts": {
+      "path": "skills/openzeppelin-skills/skills/upgrade-cairo-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: upgrade-cairo-contracts"
+    },
+    "openzeppelin-skills/upgrade-solidity-contracts": {
+      "path": "skills/openzeppelin-skills/skills/upgrade-solidity-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: upgrade-solidity-contracts"
+    },
+    "openzeppelin-skills/upgrade-stellar-contracts": {
+      "path": "skills/openzeppelin-skills/skills/upgrade-stellar-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: upgrade-stellar-contracts"
+    },
+    "openzeppelin-skills/upgrade-stylus-contracts": {
+      "path": "skills/openzeppelin-skills/skills/upgrade-stylus-contracts/SKILL.md",
+      "enabled": false,
+      "description": "name: upgrade-stylus-contracts"
+    },
+    "pashov-skills/solidity-auditor": {
+      "path": "skills/pashov-skills/solidity-auditor/SKILL.md",
+      "enabled": true,
+      "description": "name: solidity-auditor"
+    },
+    "pashov-skills/x-ray": {
+      "path": "skills/pashov-skills/x-ray/SKILL.md",
+      "enabled": true,
+      "description": "name: x-ray"
+    },
+    "qs_skills/behavioral-state-analysis": {
+      "path": "skills/qs_skills/plugins/behavioral-state-analysis/skills/behavioral-state-analysis/SKILL.md",
+      "enabled": true,
+      "description": "name: behavioral-state-analysis"
+    },
+    "qs_skills/defender": {
+      "path": "skills/qs_skills/plugins/defender/skills/defender/SKILL.md",
+      "enabled": true,
+      "description": "name: defender"
+    },
+    "qs_skills/dos-griefing-analysis": {
+      "path": "skills/qs_skills/plugins/dos-griefing-analysis/skills/dos-griefing-analysis/SKILL.md",
+      "enabled": true,
+      "description": "name: dos-griefing-analysis"
+    },
+    "qs_skills/external-call-safety": {
+      "path": "skills/qs_skills/plugins/external-call-safety/skills/external-call-safety/SKILL.md",
+      "enabled": true,
+      "description": "name: external-call-safety"
+    },
+    "qs_skills/input-arithmetic-safety": {
+      "path": "skills/qs_skills/plugins/input-arithmetic-safety/skills/input-arithmetic-safety/SKILL.md",
+      "enabled": true,
+      "description": "name: input-arithmetic-safety"
+    },
+    "qs_skills/oracle-flashloan-analysis": {
+      "path": "skills/qs_skills/plugins/oracle-flashloan-analysis/skills/oracle-flashloan-analysis/SKILL.md",
+      "enabled": true,
+      "description": "name: oracle-flashloan-analysis"
+    },
+    "qs_skills/proxy-upgrade-safety": {
+      "path": "skills/qs_skills/plugins/proxy-upgrade-safety/skills/proxy-upgrade-safety/SKILL.md",
+      "enabled": true,
+      "description": "name: proxy-upgrade-safety"
+    },
+    "qs_skills/reentrancy-pattern-analysis": {
+      "path": "skills/qs_skills/plugins/reentrancy-pattern-analysis/skills/reentrancy-pattern-analysis/SKILL.md",
+      "enabled": true,
+      "description": "name: reentrancy-pattern-analysis"
+    },
+    "qs_skills/semantic-guard-analysis": {
+      "path": "skills/qs_skills/plugins/semantic-guard-analysis/skills/semantic-guard-analysis/SKILL.md",
+      "enabled": true,
+      "description": "name: semantic-guard-analysis"
+    },
+    "qs_skills/signature-replay-analysis": {
+      "path": "skills/qs_skills/plugins/signature-replay-analysis/skills/signature-replay-analysis/SKILL.md",
+      "enabled": true,
+      "description": "name: signature-replay-analysis"
+    },
+    "qs_skills/state-invariant-detection": {
+      "path": "skills/qs_skills/plugins/state-invariant-detection/skills/state-invariant-detection/SKILL.md",
+      "enabled": true,
+      "description": "name: state-invariant-detection"
+    },
+    "sc-auditor/security-auditor": {
+      "path": "skills/sc-auditor/skills/security-auditor/SKILL.md",
+      "enabled": true,
+      "description": "name: security-auditor"
+    },
+    "scv-scan": {
+      "path": "skills/scv-scan/SKILL.md",
+      "enabled": true,
+      "description": "name: scv-scan"
+    },
+    "solskill/battlechain": {
+      "path": "skills/solskill/skills/battlechain/SKILL.md",
+      "enabled": false,
+      "description": "name: battlechain"
+    },
+    "solskill/battlechain-tutorial": {
+      "path": "skills/solskill/skills/battlechain-tutorial/SKILL.md",
+      "enabled": false,
+      "description": "name: battlechain-tutorial"
+    },
+    "solskill/solidity": {
+      "path": "skills/solskill/skills/solidity/SKILL.md",
+      "enabled": false,
+      "description": "name: solidity"
+    },
+    "trailofbits-skills/gh-cli": {
+      "path": "skills/trailofbits-skills/.codex/skills/gh-cli/SKILL.md",
+      "enabled": false,
+      "description": "name: gh-cli"
+    },
+    "trailofbits-skills/agentic-actions-auditor": {
+      "path": "skills/trailofbits-skills/plugins/agentic-actions-auditor/skills/agentic-actions-auditor/SKILL.md",
+      "enabled": false,
+      "description": "name: agentic-actions-auditor"
+    },
+    "trailofbits-skills/ask-questions-if-underspecified": {
+      "path": "skills/trailofbits-skills/plugins/ask-questions-if-underspecified/skills/ask-questions-if-underspecified/SKILL.md",
+      "enabled": false,
+      "description": "name: ask-questions-if-underspecified"
+    },
+    "trailofbits-skills/audit-context-building": {
+      "path": "skills/trailofbits-skills/plugins/audit-context-building/skills/audit-context-building/SKILL.md",
+      "enabled": true,
+      "description": "name: audit-context-building"
+    },
+    "trailofbits-skills/algorand-vulnerability-scanner": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/algorand-vulnerability-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: algorand-vulnerability-scanner"
+    },
+    "trailofbits-skills/audit-prep-assistant": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/audit-prep-assistant/SKILL.md",
+      "enabled": false,
+      "description": "name: audit-prep-assistant"
+    },
+    "trailofbits-skills/cairo-vulnerability-scanner": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/cairo-vulnerability-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: cairo-vulnerability-scanner"
+    },
+    "trailofbits-skills/code-maturity-assessor": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/code-maturity-assessor/SKILL.md",
+      "enabled": true,
+      "description": "name: code-maturity-assessor"
+    },
+    "trailofbits-skills/cosmos-vulnerability-scanner": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/cosmos-vulnerability-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: cosmos-vulnerability-scanner"
+    },
+    "trailofbits-skills/guidelines-advisor": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/guidelines-advisor/SKILL.md",
+      "enabled": false,
+      "description": "name: guidelines-advisor"
+    },
+    "trailofbits-skills/secure-workflow-guide": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/secure-workflow-guide/SKILL.md",
+      "enabled": false,
+      "description": "name: secure-workflow-guide"
+    },
+    "trailofbits-skills/solana-vulnerability-scanner": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/solana-vulnerability-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: solana-vulnerability-scanner"
+    },
+    "trailofbits-skills/substrate-vulnerability-scanner": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/substrate-vulnerability-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: substrate-vulnerability-scanner"
+    },
+    "trailofbits-skills/token-integration-analyzer": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/token-integration-analyzer/SKILL.md",
+      "enabled": true,
+      "description": "name: token-integration-analyzer"
+    },
+    "trailofbits-skills/ton-vulnerability-scanner": {
+      "path": "skills/trailofbits-skills/plugins/building-secure-contracts/skills/ton-vulnerability-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: ton-vulnerability-scanner"
+    },
+    "trailofbits-skills/burpsuite-project-parser": {
+      "path": "skills/trailofbits-skills/plugins/burpsuite-project-parser/skills/burpsuite-project-parser/SKILL.md",
+      "enabled": false,
+      "description": "name: burpsuite-project-parser"
+    },
+    "trailofbits-skills/claude-in-chrome-troubleshooting": {
+      "path": "skills/trailofbits-skills/plugins/claude-in-chrome-troubleshooting/skills/claude-in-chrome-troubleshooting/SKILL.md",
+      "enabled": false,
+      "description": "name: claude-in-chrome-troubleshooting"
+    },
+    "trailofbits-skills/constant-time-analysis": {
+      "path": "skills/trailofbits-skills/plugins/constant-time-analysis/skills/constant-time-analysis/SKILL.md",
+      "enabled": false,
+      "description": "name: constant-time-analysis"
+    },
+    "trailofbits-skills/interpreting-culture-index": {
+      "path": "skills/trailofbits-skills/plugins/culture-index/skills/interpreting-culture-index/SKILL.md",
+      "enabled": false,
+      "description": "name: interpreting-culture-index"
+    },
+    "trailofbits-skills/debug-buttercup": {
+      "path": "skills/trailofbits-skills/plugins/debug-buttercup/skills/debug-buttercup/SKILL.md",
+      "enabled": false,
+      "description": "name: debug-buttercup"
+    },
+    "trailofbits-skills/devcontainer-setup": {
+      "path": "skills/trailofbits-skills/plugins/devcontainer-setup/skills/devcontainer-setup/SKILL.md",
+      "enabled": false,
+      "description": "name: devcontainer-setup"
+    },
+    "trailofbits-skills/differential-review": {
+      "path": "skills/trailofbits-skills/plugins/differential-review/skills/differential-review/SKILL.md",
+      "enabled": false,
+      "description": "name: differential-review"
+    },
+    "trailofbits-skills/dimensional-analysis": {
+      "path": "skills/trailofbits-skills/plugins/dimensional-analysis/skills/dimensional-analysis/SKILL.md",
+      "enabled": false,
+      "description": "name: dimensional-analysis"
+    },
+    "trailofbits-skills/dwarf-expert": {
+      "path": "skills/trailofbits-skills/plugins/dwarf-expert/skills/dwarf-expert/SKILL.md",
+      "enabled": false,
+      "description": "name: dwarf-expert"
+    },
+    "trailofbits-skills/entry-point-analyzer": {
+      "path": "skills/trailofbits-skills/plugins/entry-point-analyzer/skills/entry-point-analyzer/SKILL.md",
+      "enabled": false,
+      "description": "name: entry-point-analyzer"
+    },
+    "trailofbits-skills/firebase-apk-scanner": {
+      "path": "skills/trailofbits-skills/plugins/firebase-apk-scanner/skills/firebase-apk-scanner/SKILL.md",
+      "enabled": false,
+      "description": "name: firebase-apk-scanner"
+    },
+    "trailofbits-skills/fp-check": {
+      "path": "skills/trailofbits-skills/plugins/fp-check/skills/fp-check/SKILL.md",
+      "enabled": false,
+      "description": "name: fp-check"
+    },
+    "trailofbits-skills/git-cleanup": {
+      "path": "skills/trailofbits-skills/plugins/git-cleanup/skills/git-cleanup/SKILL.md",
+      "enabled": false,
+      "description": "name: git-cleanup"
+    },
+    "trailofbits-skills/insecure-defaults": {
+      "path": "skills/trailofbits-skills/plugins/insecure-defaults/skills/insecure-defaults/SKILL.md",
+      "enabled": false,
+      "description": "name: insecure-defaults"
+    },
+    "trailofbits-skills/let-fate-decide": {
+      "path": "skills/trailofbits-skills/plugins/let-fate-decide/skills/let-fate-decide/SKILL.md",
+      "enabled": false,
+      "description": "name: let-fate-decide"
+    },
+    "trailofbits-skills/modern-python": {
+      "path": "skills/trailofbits-skills/plugins/modern-python/skills/modern-python/SKILL.md",
+      "enabled": false,
+      "description": "name: modern-python"
+    },
+    "trailofbits-skills/mutation-testing": {
+      "path": "skills/trailofbits-skills/plugins/mutation-testing/skills/mutation-testing/SKILL.md",
+      "enabled": false,
+      "description": "name: mutation-testing"
+    },
+    "trailofbits-skills/property-based-testing": {
+      "path": "skills/trailofbits-skills/plugins/property-based-testing/skills/property-based-testing/SKILL.md",
+      "enabled": false,
+      "description": "name: property-based-testing"
+    },
+    "trailofbits-skills/seatbelt-sandboxer": {
+      "path": "skills/trailofbits-skills/plugins/seatbelt-sandboxer/skills/seatbelt-sandboxer/SKILL.md",
+      "enabled": false,
+      "description": "name: seatbelt-sandboxer"
+    },
+    "trailofbits-skills/second-opinion": {
+      "path": "skills/trailofbits-skills/plugins/second-opinion/skills/second-opinion/SKILL.md",
+      "enabled": false,
+      "description": "name: second-opinion"
+    },
+    "trailofbits-skills/semgrep-rule-creator": {
+      "path": "skills/trailofbits-skills/plugins/semgrep-rule-creator/skills/semgrep-rule-creator/SKILL.md",
+      "enabled": false,
+      "description": "name: semgrep-rule-creator"
+    },
+    "trailofbits-skills/semgrep-rule-variant-creator": {
+      "path": "skills/trailofbits-skills/plugins/semgrep-rule-variant-creator/skills/semgrep-rule-variant-creator/SKILL.md",
+      "enabled": false,
+      "description": "name: semgrep-rule-variant-creator"
+    },
+    "trailofbits-skills/sharp-edges": {
+      "path": "skills/trailofbits-skills/plugins/sharp-edges/skills/sharp-edges/SKILL.md",
+      "enabled": false,
+      "description": "name: sharp-edges"
+    },
+    "trailofbits-skills/skill-improver": {
+      "path": "skills/trailofbits-skills/plugins/skill-improver/skills/skill-improver/SKILL.md",
+      "enabled": false,
+      "description": "name: skill-improver"
+    },
+    "trailofbits-skills/spec-to-code-compliance": {
+      "path": "skills/trailofbits-skills/plugins/spec-to-code-compliance/skills/spec-to-code-compliance/SKILL.md",
+      "enabled": false,
+      "description": "name: spec-to-code-compliance"
+    },
+    "trailofbits-skills/codeql": {
+      "path": "skills/trailofbits-skills/plugins/static-analysis/skills/codeql/SKILL.md",
+      "enabled": false,
+      "description": "name: codeql"
+    },
+    "trailofbits-skills/sarif-parsing": {
+      "path": "skills/trailofbits-skills/plugins/static-analysis/skills/sarif-parsing/SKILL.md",
+      "enabled": false,
+      "description": "name: sarif-parsing"
+    },
+    "trailofbits-skills/semgrep": {
+      "path": "skills/trailofbits-skills/plugins/static-analysis/skills/semgrep/SKILL.md",
+      "enabled": false,
+      "description": "name: semgrep"
+    },
+    "trailofbits-skills/supply-chain-risk-auditor": {
+      "path": "skills/trailofbits-skills/plugins/supply-chain-risk-auditor/skills/supply-chain-risk-auditor/SKILL.md",
+      "enabled": false,
+      "description": "name: supply-chain-risk-auditor"
+    },
+    "trailofbits-skills/address-sanitizer": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/address-sanitizer/SKILL.md",
+      "enabled": false,
+      "description": "name: address-sanitizer"
+    },
+    "trailofbits-skills/aflpp": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/aflpp/SKILL.md",
+      "enabled": false,
+      "description": "name: aflpp"
+    },
+    "trailofbits-skills/atheris": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/atheris/SKILL.md",
+      "enabled": false,
+      "description": "name: atheris"
+    },
+    "trailofbits-skills/cargo-fuzz": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/cargo-fuzz/SKILL.md",
+      "enabled": false,
+      "description": "name: cargo-fuzz"
+    },
+    "trailofbits-skills/constant-time-testing": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/constant-time-testing/SKILL.md",
+      "enabled": false,
+      "description": "name: constant-time-testing"
+    },
+    "trailofbits-skills/coverage-analysis": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/coverage-analysis/SKILL.md",
+      "enabled": false,
+      "description": "name: coverage-analysis"
+    },
+    "trailofbits-skills/fuzzing-dictionary": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/fuzzing-dictionary/SKILL.md",
+      "enabled": false,
+      "description": "name: fuzzing-dictionary"
+    },
+    "trailofbits-skills/fuzzing-obstacles": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/fuzzing-obstacles/SKILL.md",
+      "enabled": false,
+      "description": "name: fuzzing-obstacles"
+    },
+    "trailofbits-skills/harness-writing": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/harness-writing/SKILL.md",
+      "enabled": false,
+      "description": "name: harness-writing"
+    },
+    "trailofbits-skills/libafl": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/libafl/SKILL.md",
+      "enabled": false,
+      "description": "name: libafl"
+    },
+    "trailofbits-skills/libfuzzer": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/libfuzzer/SKILL.md",
+      "enabled": false,
+      "description": "name: libfuzzer"
+    },
+    "trailofbits-skills/ossfuzz": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/ossfuzz/SKILL.md",
+      "enabled": false,
+      "description": "name: ossfuzz"
+    },
+    "trailofbits-skills/ruzzy": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/ruzzy/SKILL.md",
+      "enabled": false,
+      "description": "name: ruzzy"
+    },
+    "trailofbits-skills/testing-handbook-generator": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/testing-handbook-generator/SKILL.md",
+      "enabled": false,
+      "description": "name: testing-handbook-generator"
+    },
+    "trailofbits-skills/wycheproof": {
+      "path": "skills/trailofbits-skills/plugins/testing-handbook-skills/skills/wycheproof/SKILL.md",
+      "enabled": false,
+      "description": "name: wycheproof"
+    },
+    "trailofbits-skills/audit-augmentation": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/audit-augmentation/SKILL.md",
+      "enabled": false,
+      "description": "name: audit-augmentation"
+    },
+    "trailofbits-skills/crypto-protocol-diagram": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/crypto-protocol-diagram/SKILL.md",
+      "enabled": false,
+      "description": "name: crypto-protocol-diagram"
+    },
+    "trailofbits-skills/diagramming-code": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/diagramming-code/SKILL.md",
+      "enabled": false,
+      "description": "name: diagramming-code"
+    },
+    "trailofbits-skills/genotoxic": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/genotoxic/SKILL.md",
+      "enabled": false,
+      "description": "name: genotoxic"
+    },
+    "trailofbits-skills/graph-evolution": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/graph-evolution/SKILL.md",
+      "enabled": false,
+      "description": "name: graph-evolution"
+    },
+    "trailofbits-skills/mermaid-to-proverif": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/mermaid-to-proverif/SKILL.md",
+      "enabled": false,
+      "description": "name: mermaid-to-proverif"
+    },
+    "trailofbits-skills/trailmark": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/trailmark/SKILL.md",
+      "enabled": false,
+      "description": "name: trailmark"
+    },
+    "trailofbits-skills/trailmark-structural": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/trailmark-structural/SKILL.md",
+      "enabled": false,
+      "description": "name: trailmark-structural"
+    },
+    "trailofbits-skills/trailmark-summary": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/trailmark-summary/SKILL.md",
+      "enabled": false,
+      "description": "name: trailmark-summary"
+    },
+    "trailofbits-skills/vector-forge": {
+      "path": "skills/trailofbits-skills/plugins/trailmark/skills/vector-forge/SKILL.md",
+      "enabled": false,
+      "description": "name: vector-forge"
+    },
+    "trailofbits-skills/variant-analysis": {
+      "path": "skills/trailofbits-skills/plugins/variant-analysis/skills/variant-analysis/SKILL.md",
+      "enabled": false,
+      "description": "name: variant-analysis"
+    },
+    "trailofbits-skills/designing-workflow-skills": {
+      "path": "skills/trailofbits-skills/plugins/workflow-skill-design/skills/designing-workflow-skills/SKILL.md",
+      "enabled": false,
+      "description": "name: designing-workflow-skills"
+    },
+    "trailofbits-skills/yara-rule-authoring": {
+      "path": "skills/trailofbits-skills/plugins/yara-authoring/skills/yara-rule-authoring/SKILL.md",
+      "enabled": false,
+      "description": "name: yara-rule-authoring"
+    },
+    "trailofbits-skills/zeroize-audit": {
+      "path": "skills/trailofbits-skills/plugins/zeroize-audit/skills/zeroize-audit/SKILL.md",
+      "enabled": false,
+      "description": "name: zeroize-audit"
+    }
+  }
+}
