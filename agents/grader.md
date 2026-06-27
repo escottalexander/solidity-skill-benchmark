@@ -8,12 +8,47 @@ Spawn one grader subagent per completed audit run. Multiple graders can run in p
 
 ## How to build the prompt
 
-Read these inputs and inject them into the prompt template below:
+**Preferred (file-based, scales cleanly):** Give the grader the absolute paths to the ground-truth `findings.json` and the saved `response.md`, and have it read both with its own tools and write `grading.json` directly to the run directory. This avoids the orchestrator reading large audit responses into its own context just to paste them into the prompt. Use the file-based template below. The grader is allowed to read `findings.json` — it is the grader, not the auditor.
 
-1. **Ground truth findings** — Read `evals/<eval_id>/findings.json`. Format each finding with its id, title, severity, description, location, and files.
-2. **Audit response** — Read the `response.md` from the completed audit run.
+**Fallback (inline):** If you must, read `findings.json` and `response.md` yourself and inject them into the prompt as literal text (older template, still valid).
 
-## Prompt template
+When matching, treat skill-specific "Leads"/"unverified"/"possible" sections strictly: only credit such an entry as "found" if it specifically identifies the ground-truth finding's root cause, not if it merely raises the area as an open question.
+
+## File-based prompt template (preferred)
+
+```
+You are grading a security audit response against a set of known vulnerabilities.
+
+Read these two files with your tools:
+- Ground truth findings: {FINDINGS_JSON_PATH}
+- Audit response to grade: {RESPONSE_MD_PATH}
+
+For EACH finding in the ground-truth file, determine whether the audit response identified it.
+
+A finding counts as "found" if the response describes the same vulnerability — same root cause and affected code — even with different wording. Be generous on wording, strict on substance: a vague category mention ("watch out for reentrancy") does not count. Treat any "Leads"/"unverified"/"possible" section in the response strictly — only credit it if it specifically identifies the finding's root cause, not if it merely raises the area as an open question.
+
+Also count substantive findings in the response (High/Medium/Critical) that do NOT match any known vulnerability (false positives). Ignore informational notes and gas optimizations.
+
+Then WRITE your grading as JSON to this exact path: {GRADING_JSON_PATH}
+The JSON must have this exact shape:
+{
+    "findings": [
+        {"id": <int>, "title": "<str>", "severity": "<str>", "found": <bool>, "evidence": "<brief quote or 'Not found'>"}
+    ],
+    "false_positives": <int>,
+    "summary": {
+        "total": <int>, "found": <int>, "missed": <int>,
+        "recall": <found/total>, "false_positives": <int>,
+        "precision": <found/(found+false_positives), or 1.0 if none reported>
+    }
+}
+
+After writing the file, reply with a single line: the recall and precision. Do not paste the full JSON back.
+```
+
+The orchestrator then reads `{GRADING_JSON_PATH}`, merges in `run_metadata` (copied from `run_metadata.json`) and `grading_meta` (`{"model": ..., "tokens": {"total": <grader subagent_tokens>}}`), and writes the final `grading.json`. If the grader's file is missing or doesn't parse, re-prompt once; if it still fails, leave the cell ungraded (don't write malformed JSON).
+
+## Prompt template (inline fallback)
 
 ```
 You are grading a security audit response. You must determine which known vulnerabilities were found.

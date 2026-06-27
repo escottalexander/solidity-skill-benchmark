@@ -13,7 +13,7 @@ import math
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJ_ROOT = Path(__file__).parent.parent
@@ -37,16 +37,19 @@ def load_all_gradings() -> list:
                 continue
             eval_id = eval_dir.name
 
-            # Use the most recent run
-            run_dirs = sorted(eval_dir.iterdir())
-            if not run_dirs:
+            # Use the most recent run that actually has a grading.json.
+            # A newer run dir may contain only error.json from a failed
+            # attempt — don't let that shadow an earlier successful run.
+            run_dirs = sorted(d for d in eval_dir.iterdir() if d.is_dir())
+            latest_run = None
+            for d in reversed(run_dirs):
+                if (d / "grading.json").exists():
+                    latest_run = d
+                    break
+            if latest_run is None:
                 continue
 
-            latest_run = run_dirs[-1]
             grading_path = latest_run / "grading.json"
-
-            if not grading_path.exists():
-                continue
 
             with open(grading_path) as f:
                 grading = json.load(f)
@@ -162,8 +165,11 @@ def aggregate(gradings: list) -> dict:
                 models_seen.add(model)
 
             tokens = meta.get("tokens", {})
-            tok_total = (tokens.get("input", 0) + tokens.get("output", 0)
-                         + tokens.get("cache_read", 0) + tokens.get("cache_creation", 0))
+            # Agent-led runs record a single {"total": N} (from the subagent
+            # usage block); legacy claude -p runs record input/output/cache_*.
+            tok_total = tokens.get("total", 0) or (
+                tokens.get("input", 0) + tokens.get("output", 0)
+                + tokens.get("cache_read", 0) + tokens.get("cache_creation", 0))
             if tok_total:
                 total_tokens_list.append(tok_total)
 
@@ -213,7 +219,7 @@ def aggregate(gradings: list) -> dict:
         entry["rank"] = i + 1
 
     benchmark = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "total_skills": len(leaderboard),
         "total_evals_available": len(list(EVALS_DIR.iterdir())) - 1,  # minus evals.json
         "leaderboard": leaderboard,
@@ -240,7 +246,7 @@ def main():
     # Save history snapshot
     history_dir = PROJ_ROOT / "results" / "history"
     history_dir.mkdir(exist_ok=True)
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     with open(history_dir / f"benchmark_{ts}.json", "w") as f:
         json.dump(benchmark, f, indent=2)
 

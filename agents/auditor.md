@@ -91,6 +91,16 @@ Read and analyze each contract. Identify all security vulnerabilities you can fi
 
 Focus on real, exploitable vulnerabilities — not gas optimizations, style issues, or informational notes. Be thorough and systematic.
 
+## Environment Constraints
+
+This is a source-reading audit. The contracts have unresolved imports (OpenZeppelin, etc.), no installed dependencies, and no build setup, so **they will not compile**. Static-analysis tools (Slither, Mythril, Semgrep, solc, Aderyn, Echidna, Halmos) are **not installed**. Do not attempt to install tools, fetch dependencies, or compile — audit by reading the source directly. If the skill methodology calls for a tool you cannot run, apply the equivalent reasoning manually.
+
+## Output
+
+Write your finished audit report to the file `{WORKSPACE}/response.md` (use the Write tool). The report file must contain ONLY the report — start directly with the title or first finding, with no scratch-reasoning preamble, no "let me analyze" recap, and no truncation; include every finding in full. After writing the file, reply with a single short confirmation line (e.g. "Wrote N findings to response.md"). Your reply text is NOT the report — the saved file is.
+
+(Writing to a file instead of returning the report keeps the orchestrator from having to re-transcribe long reports, which is essential at benchmark scale. The orchestrator copies `{WORKSPACE}/response.md` into the run directory verbatim.)
+
 IMPORTANT: Only work within {WORKSPACE}. Do not access files outside this directory.
 ```
 

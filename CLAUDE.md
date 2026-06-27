@@ -124,6 +124,15 @@ Spawn all in the same turn for maximum parallelism.
 
 As each auditor completes, save its response, clean up the workspace, and spawn a grader subagent (also in background where possible).
 
+### Scaled runs via the Workflow tool
+
+For large matrices (many skills × evals), a deterministic `Workflow` that pipelines audit→grade per cell is far more efficient than hand-managing dozens of background `Agent` calls. Hard-won rules (a pilot run lost 7/29 cells to violating the first one):
+
+- **One cell per file — never "read a shared manifest and take index N".** Workflow scripts have no filesystem access, so subagents must read their inputs from disk. If you point every subagent at the *same* manifest array and tell it "use element N", subagents reliably grab the **wrong index** — some cells get written 2–3× and others get zero. Instead, the Bash pre-step writes one `cell_<i>.json` (a single object, not an array) per cell, and each subagent reads only its own file. (Written files stay internally consistent even under the bug — each reads workspace[j] and writes response[j] — so the failure shows up as *coverage holes*, not corruption.)
+- **Pre-step owns isolation + setup.** A Bash/Python pre-step creates each isolated workspace (skill dir + contracts, **never** `findings.json` — assert it's absent), the run dir + `run_metadata.json`, and the per-cell files. Pass only tiny data to the workflow as `args` (counts, modes, labels) — and note `args` arrives as a JSON **string**, so `JSON.parse` it in the script (`typeof args === 'string' ? JSON.parse(args) : args`).
+- **Subagents write their own outputs** (`response.md`, `grading.json`) to absolute paths from their cell file — the orchestrator never re-transcribes large reports.
+- **Always validate coverage afterward and re-run holes.** Check every cell has a non-empty `response.md` and a parseable `grading.json` (right `summary` keys). Re-run only the missing/failed cells via a small recovery workflow (same one-cell-per-file pattern). A contamination check is cheap insurance: confirm each `response.md` mentions its own eval's contract names.
+
 ### Step 4: Aggregate
 
 After all grading is complete:
@@ -139,6 +148,25 @@ This produces:
 ### Step 5: Report the leaderboard
 
 Print the summary table with rank, skill, F1, recall, precision, and eval count.
+
+## Reliability & Failure Handling
+
+A full benchmark spawns hundreds of auditor + grader subagents; some will fail (timeouts, crashes, malformed output). Handle this explicitly:
+
+- **Auditor failures** — if a subagent errors or returns no usable audit text, write `error.json` to the run dir (instead of `response.md`) and skip grading for that cell. `aggregate.py` already falls back to the most recent run that has a `grading.json`, so a failed re-run won't shadow an earlier success.
+- **Grader JSON extraction** — graders are told to return *only* JSON, but models often wrap it in prose or ```` ```json ```` fences. Before saving `grading.json`, extract the JSON (strip fences, take the outermost `{...}`) and validate it parses with the expected `findings`/`summary` keys. If it doesn't parse after one re-prompt, save the raw text to `grading_error.txt` and leave the cell ungraded rather than writing malformed JSON.
+- **Re-running missing cells** — after a run, diff the (skill × eval) matrix against `results/runs/` to find cells with no valid `grading.json`, and re-run only those. Don't re-run completed cells.
+- **Duration & tokens** — the Agent tool result ends with a `<usage>` block containing `subagent_tokens` and `duration_ms`. Capture both: record `duration_seconds` (from `duration_ms`) and `tokens: {"total": <subagent_tokens>}` in `run_metadata.json`. `aggregate.py` reads `tokens.total`. **Cost is NOT surfaced** (no per-token price split), so `total_cost_usd` stays `0` and the leaderboard's Cost column stays empty — that part is expected. Token count and duration *do* populate.
+
+## Skill Comparability (read before interpreting the leaderboard)
+
+The grader scores recall/precision against an enumerated findings list, so only **full-audit skills** (those that produce a complete vulnerability list) are directly comparable on F1. Three kinds of enabled skills are *not* apples-to-apples:
+
+- **Full auditors** — e.g. `scv-scan`, `ethskills/audit`, `ethskills/security`, `pashov-skills/solidity-auditor`, `sc-auditor/security-auditor`, `qs_skills/behavioral-state-analysis`. Compare these head-to-head.
+- **Narrow single-category analyzers** — e.g. most `qs_skills` (reentrancy, dos-griefing, oracle-flashloan, etc.). They target one vuln class, so recall is structurally capped on mixed-finding evals. Don't rank them against full auditors.
+- **Non-enumeration skills** — e.g. `pashov-skills/x-ray` (pre-audit threat model), `qs_skills/defender` (deploy-readiness), `trailofbits/{audit-context-building,code-maturity-assessor,token-integration-analyzer}`. These don't output a vuln list and will score ≈0 recall by design.
+
+When benchmarking a mixed set, tier the leaderboard by skill type or restrict the headline board to full auditors.
 
 ## Baseline Runs
 
