@@ -19,7 +19,8 @@ CORE = [e["eval_id"] for e in json.load(open(f"{PROJ}/evals/core_subset.json"))[
 NFIND = {e: len(json.load(open(f"{PROJ}/evals/{e}/findings.json"))) for e in CORE}
 T95 = {4: 2.776, 9: 2.262, 14: 2.145, 19: 2.093, 21: 2.080, 24: 2.064, 26: 2.056}  # df -> t
 
-MODEL = os.environ.get("RANK_MODEL")  # e.g. claude-opus-4-8; None = latest of any model
+MODEL = os.environ.get("RANK_MODEL")      # e.g. claude-opus-4-8; None = any model
+TOOLING = os.environ.get("TOOLING")       # "enabled"/"disabled"; None = any
 
 def latest_grading(sk, ev):
     d = f"{PROJ}/results/runs/{sk}/{ev}"
@@ -29,14 +30,14 @@ def latest_grading(sk, ev):
         if not os.path.exists(gp): continue
         try: g = json.load(open(gp))
         except: continue
-        if MODEL:
-            m = g.get("run_metadata", {}).get("model")
-            if not m:
-                mf = os.path.join(d, run, "run_metadata.json")
-                if os.path.exists(mf):
-                    try: m = json.load(open(mf)).get("model")
-                    except: m = None
-            if m != MODEL: continue
+        rm = g.get("run_metadata", {})
+        if not rm:
+            mf = os.path.join(d, run, "run_metadata.json")
+            if os.path.exists(mf):
+                try: rm = json.load(open(mf))
+                except: rm = {}
+        if MODEL and rm.get("model") != MODEL: continue
+        if TOOLING and rm.get("tooling", "disabled") != TOOLING: continue
         return g
     return None
 

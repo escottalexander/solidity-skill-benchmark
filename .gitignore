@@ -16,3 +16,7 @@ __pycache__/
 
 evals/
 results/
+
+# Tooling-arm venv and build artifacts
+.venv-tools/
+evals/*/build_status.json
