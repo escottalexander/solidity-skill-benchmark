@@ -37,62 +37,72 @@ def load_all_gradings() -> list:
                 continue
             eval_id = eval_dir.name
 
-            # Use the most recent run that actually has a grading.json.
-            # A newer run dir may contain only error.json from a failed
-            # attempt — don't let that shadow an earlier successful run.
-            run_dirs = sorted(d for d in eval_dir.iterdir() if d.is_dir())
-            latest_run = None
-            for d in reversed(run_dirs):
-                if (d / "grading.json").exists():
-                    latest_run = d
-                    break
-            if latest_run is None:
-                continue
+            # Select the most recent run *per model* that has a grading.json.
+            # Two reasons this is per-model, not one-latest-overall:
+            #  - a failed re-run (only error.json) must not shadow a success;
+            #  - runs from different models (sonnet vs opus) must each survive
+            #    rather than the newest model overwriting the others.
+            latest_by_model = {}  # model -> run_dir Path (last wins = latest ts)
+            for d in sorted(x for x in eval_dir.iterdir() if x.is_dir()):
+                if not (d / "grading.json").exists():
+                    continue
+                model = _run_model(d)
+                latest_by_model[model] = d
 
-            grading_path = latest_run / "grading.json"
+            for model, latest_run in latest_by_model.items():
+                with open(latest_run / "grading.json") as f:
+                    grading = json.load(f)
 
-            with open(grading_path) as f:
-                grading = json.load(f)
+                run_meta = grading.get("run_metadata", {})
+                if not run_meta:
+                    meta_file = latest_run / "run_metadata.json"
+                    if meta_file.exists():
+                        with open(meta_file) as f:
+                            run_meta = json.load(f)
 
-            # Get skill name and metadata from run_metadata.json or timing.json
-            run_meta = grading.get("run_metadata", {})
-            if not run_meta:
-                meta_file = latest_run / "run_metadata.json"
-                if meta_file.exists():
-                    with open(meta_file) as f:
-                        run_meta = json.load(f)
+                skill_name = (run_meta.get("skill")
+                              or skill_dir.name.replace("__", "/"))
+                skill_path = run_meta.get("skill_path", "")
 
-            timing_data = grading.get("timing", {})
-            if not run_meta and not timing_data:
-                timing_path = latest_run / "timing.json"
-                if timing_path.exists():
-                    with open(timing_path) as f:
-                        timing_data = json.load(f)
+                meta_path = EVALS_DIR / eval_id / "metadata.json"
+                eval_meta = {}
+                if meta_path.exists():
+                    with open(meta_path) as f:
+                        eval_meta = json.load(f)
 
-            skill_name = (run_meta.get("skill")
-                          or timing_data.get("skill")
-                          or skill_dir.name.replace("__", "/"))
-            skill_path = (run_meta.get("skill_path")
-                          or timing_data.get("skill_path", ""))
-
-            # Load eval metadata
-            meta_path = EVALS_DIR / eval_id / "metadata.json"
-            eval_meta = {}
-            if meta_path.exists():
-                with open(meta_path) as f:
-                    eval_meta = json.load(f)
-
-            gradings.append({
-                "skill": skill_name,
-                "skill_path": skill_path,
-                "eval_id": eval_id,
-                "run_dir": str(latest_run),
-                "timestamp": latest_run.name,
-                "grading": grading,
-                "eval_meta": eval_meta,
-            })
+                gradings.append({
+                    "skill": skill_name,
+                    "skill_path": skill_path,
+                    "eval_id": eval_id,
+                    "model": model,
+                    "run_dir": str(latest_run),
+                    "timestamp": latest_run.name,
+                    "grading": grading,
+                    "eval_meta": eval_meta,
+                })
 
     return gradings
+
+
+def _run_model(run_dir) -> str:
+    """Read the model a run used, from grading.json or run_metadata.json."""
+    gp = run_dir / "grading.json"
+    if gp.exists():
+        try:
+            m = json.load(open(gp)).get("run_metadata", {}).get("model")
+            if m:
+                return m
+        except Exception:
+            pass
+    mf = run_dir / "run_metadata.json"
+    if mf.exists():
+        try:
+            m = json.load(open(mf)).get("model")
+            if m:
+                return m
+        except Exception:
+            pass
+    return "unknown"
 
 
 def compute_stats(values: list) -> dict:
@@ -118,13 +128,15 @@ def compute_stats(values: list) -> dict:
 def aggregate(gradings: list) -> dict:
     """Build the full benchmark from all gradings."""
     # Group by skill
+    # Group by (skill, model) so each model is its own leaderboard row and
+    # sonnet/opus results for the same skill are never collapsed together.
     by_skill = defaultdict(list)
     for g in gradings:
-        by_skill[g["skill"]].append(g)
+        by_skill[(g["skill"], g.get("model", "unknown"))].append(g)
 
     # Build leaderboard
     leaderboard = []
-    for skill_name, runs in sorted(by_skill.items()):
+    for (skill_name, group_model), runs in sorted(by_skill.items()):
         recalls = []
         precisions = []
         f1s = []
@@ -200,7 +212,7 @@ def aggregate(gradings: list) -> dict:
             "skill": skill_name,
             "skill_path": skill_path,
             "evals_run": len(runs),
-            "model": sorted(models_seen)[0] if len(models_seen) == 1 else list(sorted(models_seen)) or None,
+            "model": group_model,
             "recall": compute_stats(recalls),
             "precision": compute_stats(precisions),
             "f1": compute_stats(f1s),

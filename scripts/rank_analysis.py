@@ -19,14 +19,25 @@ CORE = [e["eval_id"] for e in json.load(open(f"{PROJ}/evals/core_subset.json"))[
 NFIND = {e: len(json.load(open(f"{PROJ}/evals/{e}/findings.json"))) for e in CORE}
 T95 = {4: 2.776, 9: 2.262, 14: 2.145, 19: 2.093, 21: 2.080, 24: 2.064, 26: 2.056}  # df -> t
 
+MODEL = os.environ.get("RANK_MODEL")  # e.g. claude-opus-4-8; None = latest of any model
+
 def latest_grading(sk, ev):
     d = f"{PROJ}/results/runs/{sk}/{ev}"
     if not os.path.isdir(d): return None
     for run in sorted(os.listdir(d), reverse=True):
         gp = os.path.join(d, run, "grading.json")
-        if os.path.exists(gp):
-            try: return json.load(open(gp))
-            except: pass
+        if not os.path.exists(gp): continue
+        try: g = json.load(open(gp))
+        except: continue
+        if MODEL:
+            m = g.get("run_metadata", {}).get("model")
+            if not m:
+                mf = os.path.join(d, run, "run_metadata.json")
+                if os.path.exists(mf):
+                    try: m = json.load(open(mf)).get("model")
+                    except: m = None
+            if m != MODEL: continue
+        return g
     return None
 
 def f1(r, p): return 0.0 if (r + p) == 0 else 2 * r * p / (r + p)
