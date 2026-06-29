@@ -35,7 +35,16 @@ def grading_for(sk, ev, tooling):
             g = json.loads(gp.read_text())
         except Exception:
             continue
-        rm = g.get("run_metadata", {})
+        # grading.json may not embed run_metadata (workflow graders write only
+        # findings/summary); fall back to the sibling run_metadata.json.
+        rm = g.get("run_metadata") or {}
+        if not rm:
+            mp = d / run / "run_metadata.json"
+            if mp.exists():
+                try:
+                    rm = json.loads(mp.read_text())
+                except Exception:
+                    rm = {}
         if rm.get("model") != MODEL:
             continue
         if rm.get("tooling", "disabled") != tooling:
