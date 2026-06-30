@@ -217,7 +217,7 @@
             : `<strong>${e.skill}</strong>` },
       { key:'model', label:'Model', dir:'asc', title:"Model that ran the audit: Claude Sonnet 4.6 or Opus 4.8.",
         get:e=>modelName(e), cell:e=>`<span class="metric">${modelName(e)}</span>` },
-      { key:'recall', label:'Recall', dir:'desc', title:"Share of the 27 evals' known vulnerabilities the skill caught: found / total, pooled across all 167 findings (micro-recall). Higher is better.",
+      { key:'recall', label:'Bug Catch Rate', dir:'desc', title:"Of the known bugs in the code, the share this skill actually caught: found / total, pooled across all 167 findings. Higher is better. (Technical name: recall.)",
         get:e=>e.recall.mean, cell:e=>renderBar(e.recall.mean) },
       { key:'precision', label:'Precision', dir:'desc', title:"Of the skill's substantive (High/Med/Critical) flags, the share that matched a known vulnerability: found / (found + false positives). Higher is better.",
         get:e=>e.precision.mean, cell:e=>renderBar(e.precision.mean) },
@@ -247,7 +247,7 @@
         document.getElementById('stats-row').innerHTML = `
             <div class="stat-card"><div class="value">${data.total_skills}</div><div class="label">Rows (skills + baseline x models)</div></div>
             <div class="stat-card"><div class="value">${top?.evals_run || 0}</div><div class="label">Evals (core_subset)</div></div>
-            <div class="stat-card"><div class="value">${pct(top?.recall?.mean || 0)}</div><div class="label">Top recall (${top?.skill || ''})</div></div>
+            <div class="stat-card"><div class="value">${pct(top?.recall?.mean || 0)}</div><div class="label">Top bug catch rate (${top?.skill || ''})</div></div>
             <div class="stat-card"><div class="value">${pct(top?.precision?.mean || 0)}</div><div class="label">…at this precision</div></div>
         `;
 

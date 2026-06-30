@@ -313,7 +313,7 @@ def main():
     print("Headline board: core_subset (27 evals), source-only single pass, "
           "ranked by MICRO-recall.")
     print(f"\nLeaderboard:")
-    header = (f"{'Rank':<5}{'Skill':<31}{'Model':<8}{'Recall':<8}{'Prec':<7}"
+    header = (f"{'Rank':<5}{'Skill':<31}{'Model':<8}{'Catch%':<8}{'Prec':<7}"
               f"{'Found':<8}{'Tok/find':<10}{'N':<4}")
     print(header)
     print("-" * len(header))
