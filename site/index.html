@@ -223,8 +223,6 @@
         get:e=>e.precision.mean, cell:e=>renderBar(e.precision.mean) },
       { key:'f1', label:'F1', dir:'desc', title:"Harmonic mean of recall and precision (balances catching bugs against flagging noise).",
         get:e=>e.f1.mean, cell:e=>renderBar(e.f1.mean) },
-      { key:'fp', label:'FP', dir:'asc', title:"False positives: substantive flags NOT in the answer key, summed over the 27 evals. Lower is better.",
-        get:e=>e.false_positives ?? 0, cell:e=>`<span class="metric">${e.false_positives ?? '-'}</span>` },
       { key:'tpf', label:'Tok / find', dir:'asc', title:"Tokens spent per real finding caught: total tokens over the 27 evals divided by findings found. Lower = cheaper to surface a known bug.",
         get:e=> e.tokens_per_finding == null ? Infinity : e.tokens_per_finding, cell:e=>`<span class="metric">${tokFmt(e.tokens_per_finding)}</span>` },
     ];

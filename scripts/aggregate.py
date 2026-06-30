@@ -314,7 +314,7 @@ def main():
           "ranked by MICRO-recall.")
     print(f"\nLeaderboard:")
     header = (f"{'Rank':<5}{'Skill':<31}{'Model':<8}{'Recall':<8}{'Prec':<7}"
-              f"{'FP':<6}{'Found':<8}{'Tok/find':<10}{'N':<4}")
+              f"{'Found':<8}{'Tok/find':<10}{'N':<4}")
     print(header)
     print("-" * len(header))
     for entry in benchmark["leaderboard"]:
@@ -328,8 +328,7 @@ def main():
         tpf_str = f"{tpf/1000:,.0f}K" if tpf else "-"
         print(f"{entry['rank']:<5}{entry['skill']:<31}{model_short:<8}"
               f"{entry['recall']['mean']:<8.1%}{entry['precision']['mean']:<7.1%}"
-              f"{entry.get('false_positives', 0):<6}{found_str:<8}{tpf_str:<10}"
-              f"{entry['evals_run']:<4}")
+              f"{found_str:<8}{tpf_str:<10}{entry['evals_run']:<4}")
 
 
 if __name__ == "__main__":
