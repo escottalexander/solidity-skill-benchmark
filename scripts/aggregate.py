@@ -21,59 +21,59 @@ RESULTS_DIR = PROJ_ROOT / "results" / "runs"
 EVALS_DIR = PROJ_ROOT / "evals"
 
 
-def load_all_gradings() -> list:
-    """Load all grading.json files from results."""
-    gradings = []
+def _core_subset() -> set:
+    try:
+        data = json.loads((EVALS_DIR / "core_subset.json").read_text())
+        return {e["eval_id"] for e in data["evals"]}
+    except Exception:
+        return set()
 
+
+def load_all_gradings() -> list:
+    """Load the HEADLINE comparison: each skill (+ baseline) on the 27
+    core_subset evals, source-only single pass, per model. Deliberately scoped
+    to one apples-to-apples comparison — the tooling A/B and multi-pass runs are
+    separate experiments (see scripts/tooling_compare.py, multipass_analysis.py)
+    and are excluded here so they don't jumble the board."""
+    gradings = []
     if not RESULTS_DIR.exists():
         return gradings
+    core = _core_subset()
 
     for skill_dir in sorted(RESULTS_DIR.iterdir()):
         if not skill_dir.is_dir():
             continue
-
         for eval_dir in sorted(skill_dir.iterdir()):
-            if not eval_dir.is_dir():
+            if not eval_dir.is_dir() or eval_dir.name not in core:
                 continue
             eval_id = eval_dir.name
 
-            # Select the most recent run per (model, tooling) that has a
-            # grading.json. Keyed on both axes so a failed re-run can't shadow a
-            # success, and sonnet/opus and tools-on/tools-off all survive as
-            # distinct cells rather than the newest overwriting the others.
-            latest_by_key = {}  # (model, tooling) -> run_dir Path (last = latest ts)
+            # Per model, pick the original source-only run: tooling disabled,
+            # not pass 2, not the tooling A/B's tools-off arm (its dirs end "D").
+            latest_by_model = {}  # model -> (run_dir, meta)
             for d in sorted(x for x in eval_dir.iterdir() if x.is_dir()):
                 if not (d / "grading.json").exists():
                     continue
-                latest_by_key[(_run_model(d), _run_tooling(d))] = d
+                m = _meta(d)
+                if m.get("tooling", "disabled") != "disabled":
+                    continue
+                if m.get("pass") == 2 or d.name.endswith("D"):
+                    continue
+                model = m.get("model", "unknown")
+                latest_by_model[model] = (d, m)
 
-            for (model, tooling), latest_run in latest_by_key.items():
-                with open(latest_run / "grading.json") as f:
-                    grading = json.load(f)
-
-                run_meta = grading.get("run_metadata", {})
-                if not run_meta:
-                    meta_file = latest_run / "run_metadata.json"
-                    if meta_file.exists():
-                        with open(meta_file) as f:
-                            run_meta = json.load(f)
-
-                skill_name = (run_meta.get("skill")
-                              or skill_dir.name.replace("__", "/"))
-                skill_path = run_meta.get("skill_path", "")
-
+            for model, (latest_run, m) in latest_by_model.items():
+                grading = json.loads((latest_run / "grading.json").read_text())
+                skill_name = m.get("skill") or skill_dir.name.replace("__", "/")
                 meta_path = EVALS_DIR / eval_id / "metadata.json"
-                eval_meta = {}
-                if meta_path.exists():
-                    with open(meta_path) as f:
-                        eval_meta = json.load(f)
-
+                eval_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
                 gradings.append({
                     "skill": skill_name,
-                    "skill_path": skill_path,
+                    "skill_path": m.get("skill_path", ""),
                     "eval_id": eval_id,
                     "model": model,
-                    "tooling": tooling,
+                    "tooling": "disabled",
+                    "is_baseline": bool(m.get("is_baseline")),
                     "run_dir": str(latest_run),
                     "timestamp": latest_run.name,
                     "grading": grading,
@@ -83,46 +83,24 @@ def load_all_gradings() -> list:
     return gradings
 
 
-def _run_model(run_dir) -> str:
-    """Read the model a run used, from grading.json or run_metadata.json."""
+def _meta(run_dir) -> dict:
+    """Authoritative run identity from run_metadata.json (orchestrator-written).
+    Falls back to grading.json's embedded run_metadata only if that file is
+    absent — never the other way around, because a grader subagent can inject a
+    bogus run_metadata into grading.json (e.g. model="sonnet")."""
+    mp = run_dir / "run_metadata.json"
+    if mp.exists():
+        try:
+            return json.loads(mp.read_text())
+        except Exception:
+            pass
     gp = run_dir / "grading.json"
     if gp.exists():
         try:
-            m = json.load(open(gp)).get("run_metadata", {}).get("model")
-            if m:
-                return m
+            return json.loads(gp.read_text()).get("run_metadata", {}) or {}
         except Exception:
             pass
-    mf = run_dir / "run_metadata.json"
-    if mf.exists():
-        try:
-            m = json.load(open(mf)).get("model")
-            if m:
-                return m
-        except Exception:
-            pass
-    return "unknown"
-
-
-def _run_tooling(run_dir) -> str:
-    """Read the tooling mode (enabled/disabled) for a run; default disabled."""
-    gp = run_dir / "grading.json"
-    if gp.exists():
-        try:
-            t = json.load(open(gp)).get("run_metadata", {}).get("tooling")
-            if t:
-                return t
-        except Exception:
-            pass
-    mf = run_dir / "run_metadata.json"
-    if mf.exists():
-        try:
-            t = json.load(open(mf)).get("tooling")
-            if t:
-                return t
-        except Exception:
-            pass
-    return "disabled"
+    return {}
 
 
 def compute_stats(values: list) -> dict:
@@ -165,6 +143,7 @@ def aggregate(gradings: list) -> dict:
         total_tokens_list = []
         models_seen = set()
         per_eval = []
+        found_sum = total_sum = fp_sum = 0
 
         for run in runs:
             summary = run["grading"].get("summary", {})
@@ -172,6 +151,9 @@ def aggregate(gradings: list) -> dict:
             precision = summary.get("precision", 0)
             recalls.append(recall)
             precisions.append(precision)
+            found_sum += summary.get("found", 0)
+            total_sum += summary.get("total", 0)
+            fp_sum += summary.get("false_positives", 0)
 
             if recall + precision > 0:
                 f1 = 2 * (precision * recall) / (precision + recall)
@@ -228,15 +210,31 @@ def aggregate(gradings: list) -> dict:
         # Get skill_path from the first run (all runs share the same skill)
         skill_path = runs[0].get("skill_path", "")
 
+        # MICRO metrics (pool all findings, then divide) are the headline numbers
+        # — the macro per-eval mean has too little power to rank these (see
+        # FINDINGS.md §2). We keep the per-eval spread as the stddev for context.
+        micro_recall = found_sum / total_sum if total_sum else 0
+        micro_precision = (found_sum / (found_sum + fp_sum)
+                           if (found_sum + fp_sum) else 0)
+        micro_f1 = (2 * micro_precision * micro_recall / (micro_precision + micro_recall)
+                    if (micro_precision + micro_recall) else 0)
+        recall_stats = compute_stats(recalls); recall_stats["mean"] = round(micro_recall, 4)
+        precision_stats = compute_stats(precisions); precision_stats["mean"] = round(micro_precision, 4)
+        f1_stats = compute_stats(f1s); f1_stats["mean"] = round(micro_f1, 4)
+
         entry = {
             "skill": skill_name,
             "skill_path": skill_path,
             "evals_run": len(runs),
             "model": group_model,
             "tooling": group_tooling,
-            "recall": compute_stats(recalls),
-            "precision": compute_stats(precisions),
-            "f1": compute_stats(f1s),
+            "is_baseline": runs[0].get("is_baseline", False),
+            "recall": recall_stats,
+            "precision": precision_stats,
+            "f1": f1_stats,
+            "found": found_sum,
+            "total": total_sum,
+            "false_positives": fp_sum,
             "duration": compute_stats(durations) if durations else None,
             "cost_usd": compute_stats(costs) if costs else None,
             "tokens": compute_stats(total_tokens_list) if total_tokens_list else None,
@@ -244,8 +242,8 @@ def aggregate(gradings: list) -> dict:
         }
         leaderboard.append(entry)
 
-    # Sort by F1 mean descending
-    leaderboard.sort(key=lambda x: x["f1"]["mean"], reverse=True)
+    # Sort by micro-recall descending (the metric we trust)
+    leaderboard.sort(key=lambda x: x["recall"]["mean"], reverse=True)
 
     # Add rank
     for i, entry in enumerate(leaderboard):
@@ -290,27 +288,25 @@ def main():
         json.dump(benchmark, f, indent=2)
 
     # Print summary
-    print(f"Benchmark generated: {benchmark['total_skills']} skills evaluated")
+    print(f"Benchmark generated: {benchmark['total_skills']} rows "
+          f"(6 skills + baseline x 2 models)")
+    print("Headline board: core_subset (27 evals), source-only single pass, "
+          "ranked by MICRO-recall.")
     print(f"\nLeaderboard:")
-    header = (f"{'Rank':<6}{'Skill':<35}{'Model':<22}{'Tools':<10}{'F1':<9}"
-              f"{'Recall':<9}{'Prec':<9}{'Tokens':<12}{'Time':<8}{'N':<4}")
+    header = (f"{'Rank':<6}{'Skill':<33}{'Model':<9}{'Recall':<9}"
+              f"{'Prec':<9}{'F1':<9}{'Found':<9}{'N':<4}")
     print(header)
     print("-" * len(header))
     for entry in benchmark["leaderboard"]:
         model = entry.get("model", "") or ""
         if isinstance(model, list):
             model = ",".join(model)
-        model_short = model[:21] if model else "-"
-        tooling = entry.get("tooling", "disabled")
-        tool_str = "ON" if tooling == "enabled" else "off"
-        tokens = entry.get("tokens")
-        tok_str = f"{tokens['mean']:,.0f}" if tokens and tokens["n"] else "-"
-        dur = entry.get("duration")
-        dur_str = f"{dur['mean']:.0f}s" if dur and dur["n"] else "-"
-        print(f"{entry['rank']:<6}{entry['skill']:<35}{model_short:<22}{tool_str:<10}"
-              f"{entry['f1']['mean']:<9.1%}{entry['recall']['mean']:<9.1%}"
-              f"{entry['precision']['mean']:<9.1%}{tok_str:<12}"
-              f"{dur_str:<8}{entry['evals_run']:<4}")
+        model_short = ("opus" if "opus" in model else
+                       "sonnet" if "sonnet" in model else (model[:8] or "-"))
+        found_str = f"{entry.get('found', 0)}/{entry.get('total', 0)}"
+        print(f"{entry['rank']:<6}{entry['skill']:<33}{model_short:<9}"
+              f"{entry['recall']['mean']:<9.1%}{entry['precision']['mean']:<9.1%}"
+              f"{entry['f1']['mean']:<9.1%}{found_str:<9}{entry['evals_run']:<4}")
 
 
 if __name__ == "__main__":

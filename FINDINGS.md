@@ -251,7 +251,7 @@ per-finding McNemar of each skill vs the no-skill baseline, on the same 27 evals
 
 | Script | Produces |
 |---|---|
-| `scripts/aggregate.py` | Leaderboard grouped by (skill, model, tooling) → `results/benchmark.json`, `site/data.json` |
+| `scripts/aggregate.py` | Headline leaderboard: 6 skills + baseline × 2 models on core_subset, source-only, ranked by **micro-recall** → `results/benchmark.json`, `site/data.json`. (Tooling A/B + multi-pass are excluded here by design; use their own scripts.) |
 | `scripts/rank_analysis.py` | Per-model CI + paired-McNemar skill ranking (`RANK_MODEL`, `TOOLING` env filters) |
 | `scripts/model_compare.py` | Sonnet-vs-Opus micro-recall + paired McNemar |
 | `scripts/multipass_analysis.py` | Single-pass vs 2-pass union recall (the +40%) |
