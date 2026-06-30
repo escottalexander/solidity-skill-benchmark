@@ -127,6 +127,22 @@
             font-size: 0.8rem;
             margin-top: 2rem;
         }
+
+        .links { margin: -1rem 0 1.5rem; display: flex; gap: 1.25rem; flex-wrap: wrap; }
+        .links a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+        .links a:hover { text-decoration: underline; }
+
+        .filter-bar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+        .filter-bar .lbl { color: var(--text-muted); font-size: 0.85rem; }
+        .filter-btn {
+            background: var(--surface); border: 1px solid var(--border);
+            color: var(--text-muted); border-radius: 6px;
+            padding: 0.3rem 0.7rem; font-size: 0.85rem; cursor: pointer;
+        }
+        .filter-btn:hover { color: var(--text); }
+        .filter-btn.active { color: var(--text); border-color: var(--accent); }
+        th.active { color: var(--accent); }
+        .sort-arrow { font-size: 0.7rem; margin-left: 0.25rem; }
     </style>
 </head>
 <body>
@@ -135,7 +151,13 @@
     Headline: 27 core_subset evals, source-only single pass, ranked by micro-recall.
     Tooling A/B and multi-pass are separate experiments (see FINDINGS.md).</p>
 
+    <p class="links">
+        <a href="https://github.com/escottalexander/solidity-skill-benchmark/blob/main/FINDINGS.md">📄 Full findings &amp; hard facts</a>
+        <a href="https://github.com/escottalexander/solidity-skill-benchmark">⌂ GitHub repo</a>
+    </p>
+
     <div id="stats-row" class="stats-row"></div>
+    <div id="controls" class="filter-bar"></div>
     <div id="leaderboard"></div>
     <div id="timestamp" class="timestamp"></div>
 
@@ -167,13 +189,45 @@
     }
 
     function renderBar(value) {
-        return `<span class="bar-container"><span class="bar" style="width:${value*100}%;background:${barColor(value)}"></span></span><span class="metric ${colorClass(value)}">${pct(value)}</span>`;
+        return `<span class="metric">${pct(value)}</span>`;
     }
 
     function rankClass(rank) {
         if (rank <= 3) return `rank rank-${rank}`;
         return 'rank';
     }
+
+    let LB = [];
+    let SORT = { key: 'recall', dir: 'desc' };
+    let FILTER = 'all';
+
+    const modelName = (e) => e.model && e.model.includes('opus') ? 'Opus'
+        : e.model && e.model.includes('sonnet') ? 'Sonnet' : (e.model || '-');
+    const tokFmt = (t) => t == null ? '-'
+        : t >= 1e6 ? (t/1e6).toFixed(2) + 'M' : (t/1e3).toFixed(0) + 'K';
+
+    // Column definitions drive the header (label + hover title), the cell
+    // rendering, and the sort key. `dir` is the default direction on first click.
+    const COLUMNS = [
+      { key:'rank', label:'Rank', dir:'asc', title:"Position on the headline board, ranked by micro-recall.",
+        get:e=>e.rank, cell:e=>`<span class="${rankClass(e.rank)}">#${e.rank}</span>` },
+      { key:'skill', label:'Skill', dir:'asc', title:"The audit skill (its SKILL.md), or the no-skill baseline control.",
+        get:e=>e.skill.toLowerCase(), cell:e=> e.is_baseline
+            ? `<strong>${e.skill}</strong> <span style="color:var(--text-muted)">(no skill)</span>`
+            : `<strong>${e.skill}</strong>` },
+      { key:'model', label:'Model', dir:'asc', title:"Model that ran the audit: Claude Sonnet 4.6 or Opus 4.8.",
+        get:e=>modelName(e), cell:e=>`<span class="metric">${modelName(e)}</span>` },
+      { key:'recall', label:'Recall', dir:'desc', title:"Share of the 27 evals' known vulnerabilities the skill caught: found / total, pooled across all 167 findings (micro-recall). Higher is better.",
+        get:e=>e.recall.mean, cell:e=>renderBar(e.recall.mean) },
+      { key:'precision', label:'Precision', dir:'desc', title:"Of the skill's substantive (High/Med/Critical) flags, the share that matched a known vulnerability: found / (found + false positives). Higher is better.",
+        get:e=>e.precision.mean, cell:e=>renderBar(e.precision.mean) },
+      { key:'f1', label:'F1', dir:'desc', title:"Harmonic mean of recall and precision (balances catching bugs against flagging noise).",
+        get:e=>e.f1.mean, cell:e=>renderBar(e.f1.mean) },
+      { key:'fp', label:'FP', dir:'asc', title:"False positives: substantive flags NOT in the answer key, summed over the 27 evals. Lower is better.",
+        get:e=>e.false_positives ?? 0, cell:e=>`<span class="metric">${e.false_positives ?? '-'}</span>` },
+      { key:'tpf', label:'Tok / find', dir:'asc', title:"Tokens spent per real finding caught: total tokens over the 27 evals divided by findings found. Lower = cheaper to surface a known bug.",
+        get:e=> e.tokens_per_finding == null ? Infinity : e.tokens_per_finding, cell:e=>`<span class="metric">${tokFmt(e.tokens_per_finding)}</span>` },
+    ];
 
     function render(data) {
         if (!data || !data.leaderboard || data.leaderboard.length === 0) {
@@ -190,6 +244,7 @@
         const totalFindings = data.leaderboard.reduce((sum, s) =>
             sum + s.per_eval.reduce((s2, e) => s2 + e.total, 0), 0);
 
+        LB = data.leaderboard;
         const top = data.leaderboard[0];
         document.getElementById('stats-row').innerHTML = `
             <div class="stat-card"><div class="value">${data.total_skills}</div><div class="label">Rows (skills + baseline x models)</div></div>
@@ -198,73 +253,68 @@
             <div class="stat-card"><div class="value">${pct(top?.precision?.mean || 0)}</div><div class="label">…at this precision</div></div>
         `;
 
-        // Table
-        let html = `<table>
-            <thead><tr>
-                <th>Rank</th>
-                <th>Skill</th>
-                <th>Model</th>
-                <th>Recall</th>
-                <th>Precision</th>
-                <th>F1</th>
-                <th title="False positives: substantive flags not in the answer key, summed over 27 evals">FP</th>
-                <th title="Tokens spent per real finding caught (lower = cheaper to surface a known bug)">Tok / find</th>
-                <th>Evals</th>
-            </tr></thead><tbody>`;
-
-        const tokFmt = (t) => t == null ? '-'
-            : t >= 1e6 ? (t/1e6).toFixed(2) + 'M' : (t/1e3).toFixed(0) + 'K';
-        for (const entry of data.leaderboard) {
-            const model = entry.model && entry.model.includes('opus') ? 'Opus'
-                        : entry.model && entry.model.includes('sonnet') ? 'Sonnet'
-                        : (entry.model || '-');
-            const id = (entry.skill + '_' + model).replace(/[^a-z0-9]/gi, '_');
-            const label = entry.is_baseline
-                ? `<strong>${entry.skill}</strong> <span style="color:var(--text-muted)">(no skill)</span>`
-                : `<strong>${entry.skill}</strong>`;
-            html += `<tr onclick="toggleDetail('${id}')" style="cursor:pointer">
-                <td><span class="${rankClass(entry.rank)}">#${entry.rank}</span></td>
-                <td>${label}</td>
-                <td class="metric">${model}</td>
-                <td>${renderBar(entry.recall.mean)}</td>
-                <td>${renderBar(entry.precision.mean)}</td>
-                <td>${renderBar(entry.f1.mean)}</td>
-                <td class="metric">${entry.false_positives ?? '-'}</td>
-                <td class="metric">${tokFmt(entry.tokens_per_finding)}</td>
-                <td class="metric">${entry.evals_run}</td>
-            </tr>`;
-
-            // Detail row
-            html += `<tr class="detail-panel" id="detail-${id}"><td colspan="9"><div class="detail-content">
-                <p style="margin-bottom:0.5rem;color:var(--text-muted)">
-                    F1: ${pct(entry.f1.mean)} +/- ${pct(entry.f1.stddev)} |
-                    Recall: ${pct(entry.recall.mean)} +/- ${pct(entry.recall.stddev)} |
-                    Precision: ${pct(entry.precision.mean)} +/- ${pct(entry.precision.stddev)}
-                </p>
-                <div class="detail-grid">`;
-
-            for (const e of entry.per_eval) {
-                html += `<div class="detail-item">
-                    <div class="eval-name">${e.eval_id}</div>
-                    <div class="eval-score">
-                        ${e.found}/${e.total} found |
-                        F1: <span class="${colorClass(e.f1)}">${pct(e.f1)}</span> |
-                        FP: ${e.false_positives}
-                    </div>
-                </div>`;
-            }
-
-            html += `</div></div></td></tr>`;
-        }
-
-        html += '</tbody></table>';
-        document.getElementById('leaderboard').innerHTML = html;
+        renderControls();
+        renderTable();
         document.getElementById('timestamp').textContent = `Last updated: ${data.generated_at}`;
+    }
+
+    function renderControls() {
+        const btn = (v, l) => `<button class="filter-btn ${FILTER===v?'active':''}" onclick="setFilter('${v}')">${l}</button>`;
+        document.getElementById('controls').innerHTML =
+            `<span class="lbl">Model:</span>${btn('all','All')}${btn('sonnet','Sonnet')}${btn('opus','Opus')}`
+            + `<span class="lbl" style="margin-left:1rem">Click a column header to sort &middot; hover for definitions</span>`;
+    }
+
+    function setFilter(v) { FILTER = v; renderControls(); renderTable(); }
+
+    function sortBy(key) {
+        const col = COLUMNS.find(c => c.key === key);
+        if (SORT.key === key) SORT.dir = (SORT.dir === 'asc' ? 'desc' : 'asc');
+        else SORT = { key, dir: col.dir };
+        renderTable();
+    }
+
+    function renderTable() {
+        let rows = LB.slice();
+        if (FILTER !== 'all') rows = rows.filter(e => modelName(e).toLowerCase() === FILTER);
+        const col = COLUMNS.find(c => c.key === SORT.key) || COLUMNS[3];
+        const sign = SORT.dir === 'asc' ? 1 : -1;
+        rows.sort((a, b) => { const x = col.get(a), y = col.get(b);
+            return (x < y ? -1 : x > y ? 1 : 0) * sign; });
+
+        let head = '<thead><tr>';
+        for (const c of COLUMNS) {
+            const active = c.key === SORT.key;
+            const arrow = active ? `<span class="sort-arrow">${SORT.dir==='asc'?'▲':'▼'}</span>` : '';
+            head += `<th class="${active?'active':''}" title="${c.title}" onclick="sortBy('${c.key}')">${c.label}${arrow}</th>`;
+        }
+        head += '</tr></thead>';
+
+        let body = '<tbody>';
+        for (const e of rows) {
+            const id = (e.skill + '_' + modelName(e)).replace(/[^a-z0-9]/gi, '_');
+            body += `<tr onclick="toggleDetail('${id}')" style="cursor:pointer">`;
+            for (const c of COLUMNS) body += `<td>${c.cell(e)}</td>`;
+            body += `</tr>`;
+            body += `<tr class="detail-panel" id="detail-${id}"><td colspan="${COLUMNS.length}"><div class="detail-content">
+                <p style="margin-bottom:0.5rem;color:var(--text-muted)">
+                    Recall ${pct(e.recall.mean)} | Precision ${pct(e.precision.mean)} | F1 ${pct(e.f1.mean)}
+                    | FP ${e.false_positives ?? '-'} | Tok/find ${tokFmt(e.tokens_per_finding)} | ${e.evals_run} evals</p>
+                <div class="detail-grid">`;
+            for (const pe of (e.per_eval || [])) {
+                body += `<div class="detail-item"><div class="eval-name">${pe.eval_id}</div>
+                    <div class="eval-score">${pe.found}/${pe.total} found |
+                        F1 <span class="${colorClass(pe.f1)}">${pct(pe.f1)}</span> | FP ${pe.false_positives}</div></div>`;
+            }
+            body += `</div></div></td></tr>`;
+        }
+        body += '</tbody>';
+        document.getElementById('leaderboard').innerHTML = `<table>${head}${body}</table>`;
     }
 
     function toggleDetail(id) {
         const el = document.getElementById('detail-' + id);
-        el.classList.toggle('open');
+        if (el) el.classList.toggle('open');
     }
 
     loadData().then(render);
