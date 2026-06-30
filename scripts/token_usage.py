@@ -11,7 +11,8 @@ skill via the run-dir path it wrote. Reports, per skill (auditors):
   - total billed: input+output+cache summed across turns (overall cost proxy)
 Plus the skill's static on-disk footprint (SKILL.md + bundled files).
 
-Usage: python3 scripts/token_usage.py <workflow_transcript_dir>
+Usage: python3 scripts/token_usage.py <workflow_transcript_dir> [more_dirs...]
+(Pass several dirs when a run spanned multiple workflows, e.g. a resume.)
 """
 import json
 import os
@@ -72,11 +73,13 @@ def static_footprint(skilldir):
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: token_usage.py <workflow_transcript_dir>")
+        print("usage: token_usage.py <workflow_transcript_dir> [more_dirs...]")
         sys.exit(1)
-    tdir = sys.argv[1]
+    files = []
+    for tdir in sys.argv[1:]:
+        files.extend(glob.glob(os.path.join(tdir, "*.jsonl")))
     by_skill = defaultdict(lambda: {"n": 0, "peak": [], "out": [], "tot": []})
-    for f in glob.glob(os.path.join(tdir, "*.jsonl")):
+    for f in files:
         sd, kind, peak, out, tot = agent_stats(f)
         if kind != "audit" or not sd:
             continue

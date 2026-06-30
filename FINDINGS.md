@@ -12,7 +12,7 @@ source-only (no compiler/tools) unless a section says otherwise.
 
 ## TL;DR
 
-- **The biggest finding: no skill significantly beats no skill.** Against a
+- **The biggest finding: no single skill significantly beats no skill.** Against a
   raw-model baseline (no methodology), not one of the 6 skills is significantly
   better on recall, on either model. The best skill ties the baseline; some
   skills are *worse* than baseline and all add more false positives. (§8)
@@ -166,26 +166,34 @@ candidates compiled). Sonnet, 6 skills, tools-off vs tools-on, same evals.
 
 ## 7. Token / context-window usage per skill
 
-Reconstructed from agent transcripts (`scripts/token_usage.py`), Sonnet,
-27-eval pass, averaged per audit:
+Reconstructed from agent transcripts (`scripts/token_usage.py`), per audit
+averaged over 27 evals. "peak" = high-water mark of context the model held in a
+single turn; "total" = input+cache+output summed across turns (cost proxy).
 
-| Skill | peak context | output | total billed | skill size |
-|---|---|---|---|---|
-| pashov | 61.4K | 18.7K | 606K | 22 files / 159 KB |
-| scv-scan | 60.4K | 15.8K | **953K** | 68 files / 198 KB |
-| sc-auditor | 54.5K | 24.0K | 427K | 25 files / 268 KB |
-| ethskills/security | 50.6K | 14.1K | 378K | 1 file / 19 KB |
-| **ethskills/audit** | 46.6K | 17.0K | **347K** | 1 file / 3 KB |
-| qs-bsa | 44.9K | 15.8K | 329K | 3 files / 9 KB |
+| Skill | Sonnet peak / total | Opus peak / total | skill size |
+|---|---|---|---|
+| pashov | 61.4K / 606K | 80.9K / **1.23M** | 22 files / 159 KB |
+| scv-scan | 60.4K / **953K** | 65.8K / 995K | 68 files / 198 KB |
+| sc-auditor | 54.5K / 427K | 63.6K / 643K | 25 files / 268 KB |
+| ethskills/security | 50.6K / 378K | 55.5K / 486K | 1 file / 19 KB |
+| qs-bsa | 44.9K / 329K | 50.4K / 542K | 3 files / 9 KB |
+| **ethskills/audit** | 46.6K / **347K** | 48.8K / **444K** | 1 file / 3 KB |
 
-- **Peak context window usage is fairly uniform (45–61K)** — agents read skill
+- **Peak context window usage is fairly uniform (45–81K)** — agents read skill
   bundles selectively, so a 68-file skill doesn't fill the window proportionally.
-- **Total token cost varies ~3×** (scv-scan 953K vs ethskills/audit 347K),
-  driven by turns/files the methodology touches, not window size.
-- **The winner is the leanest:** ethskills/audit = best recall, smallest skill
-  (3 KB), lowest cost. More skill machinery did not buy more accuracy.
-- `total billed` includes cheap cache reads, so it overstates dollar cost but is
-  fair as a relative measure.
+- **Total token cost varies ~3×** within a model (scv-scan/pashov heaviest,
+  ethskills/audit & qs-bsa lightest), driven by turns/files the methodology
+  touches, not window size.
+- **Opus costs ~1.3–2× more than Sonnet** per audit (more reasoning), but the
+  *same* skills are heaviest and lightest on both models — the cost profile is a
+  property of the skill, not the model.
+- **The winner is the leanest on both models:** ethskills/audit = best recall,
+  smallest skill (3 KB), lowest cost. More skill machinery did not buy accuracy.
+- On the tooling A/B's compilable evals (smaller, single-file contracts), peak
+  context was lower (32–44K) — an eval-size effect, not a tooling effect.
+- `total` includes cheap cache reads, so it overstates dollar cost but is fair
+  as a relative measure. (Tokens reconstructed from transcripts; not persisted
+  in `run_metadata` — see §11.)
 
 ## 8. Baseline: how much do the skills add over the raw model?
 
