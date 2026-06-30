@@ -207,9 +207,13 @@
                 <th>Recall</th>
                 <th>Precision</th>
                 <th>F1</th>
+                <th title="False positives: substantive flags not in the answer key, summed over 27 evals">FP</th>
+                <th title="Tokens spent per real finding caught (lower = cheaper to surface a known bug)">Tok / find</th>
                 <th>Evals</th>
             </tr></thead><tbody>`;
 
+        const tokFmt = (t) => t == null ? '-'
+            : t >= 1e6 ? (t/1e6).toFixed(2) + 'M' : (t/1e3).toFixed(0) + 'K';
         for (const entry of data.leaderboard) {
             const model = entry.model && entry.model.includes('opus') ? 'Opus'
                         : entry.model && entry.model.includes('sonnet') ? 'Sonnet'
@@ -225,11 +229,13 @@
                 <td>${renderBar(entry.recall.mean)}</td>
                 <td>${renderBar(entry.precision.mean)}</td>
                 <td>${renderBar(entry.f1.mean)}</td>
+                <td class="metric">${entry.false_positives ?? '-'}</td>
+                <td class="metric">${tokFmt(entry.tokens_per_finding)}</td>
                 <td class="metric">${entry.evals_run}</td>
             </tr>`;
 
             // Detail row
-            html += `<tr class="detail-panel" id="detail-${id}"><td colspan="7"><div class="detail-content">
+            html += `<tr class="detail-panel" id="detail-${id}"><td colspan="9"><div class="detail-content">
                 <p style="margin-bottom:0.5rem;color:var(--text-muted)">
                     F1: ${pct(entry.f1.mean)} +/- ${pct(entry.f1.stddev)} |
                     Recall: ${pct(entry.recall.mean)} +/- ${pct(entry.recall.stddev)} |

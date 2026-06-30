@@ -195,6 +195,15 @@ single turn; "total" = input+cache+output summed across turns (cost proxy).
   as a relative measure. (Tokens reconstructed from transcripts; not persisted
   in `run_metadata` — see §11.)
 
+**Tokens per real finding** (a cost-efficiency metric now shown on the
+leaderboard = total tokens over the 27 evals ÷ real findings caught; lower is
+cheaper to surface a known bug): **baseline is the cheapest** (~214K/finding
+Sonnet, ~241K Opus) and ethskills/audit is close (~231K Opus); **scv-scan is the
+worst by far** (~2.15M/finding Sonnet — heavy *and* low-recall). So the no-skill
+baseline and the lean winner are also the most token-efficient; the heaviest
+skills cost up to ~10× more per bug found. (Persisted via
+`scripts/persist_token_usage.py` → `results/token_usage.json`.)
+
 ## 8. Baseline: how much do the skills add over the raw model?
 
 No-skill control — the raw model audits the same 27 evals with no methodology,
@@ -257,7 +266,8 @@ per-finding McNemar of each skill vs the no-skill baseline, on the same 27 evals
 | `scripts/multipass_analysis.py` | Single-pass vs 2-pass union recall (the +40%) |
 | `scripts/tooling_compare.py` | Tools-on vs tools-off lift on the compilable set (`MODEL` env) |
 | `scripts/baseline_compare.py` | Each skill vs the no-skill baseline, per model (paired McNemar) |
-| `scripts/token_usage.py <workflow_dir>` | Per-skill token / context-window usage |
+| `scripts/token_usage.py <workflow_dir>` | Per-skill token / context-window usage (ad-hoc) |
+| `scripts/persist_token_usage.py <dirs>` | Writes `results/token_usage.json` (headline-run token totals) so aggregate can show tokens-per-finding |
 | `scripts/compile_eval.py` / `discover_compilable.py` | Build harness + the compilable set |
 | `scripts/setup_*.py` | One-cell-per-file run setup for each experiment |
 

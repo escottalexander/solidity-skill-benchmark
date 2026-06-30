@@ -125,6 +125,16 @@ def compute_stats(values: list) -> dict:
 
 def aggregate(gradings: list) -> dict:
     """Build the full benchmark from all gradings."""
+    # Per-(skill, model) token totals for the headline runs, if reconstructed
+    # (results/token_usage.json, written by scripts/persist_token_usage.py).
+    tok_map = {}
+    tpath = PROJ_ROOT / "results" / "token_usage.json"
+    if tpath.exists():
+        try:
+            tok_map = json.loads(tpath.read_text())
+        except Exception:
+            tok_map = {}
+
     # Group by (skill, model, tooling) so each combination is its own
     # leaderboard row: sonnet/opus and tools-on/tools-off never collapse.
     by_skill = defaultdict(list)
@@ -222,6 +232,13 @@ def aggregate(gradings: list) -> dict:
         precision_stats = compute_stats(precisions); precision_stats["mean"] = round(micro_precision, 4)
         f1_stats = compute_stats(f1s); f1_stats["mean"] = round(micro_f1, 4)
 
+        # Token efficiency: total tokens spent across the eval set per REAL
+        # finding caught (lower = cheaper to surface a known bug).
+        tok = tok_map.get(f"{skill_name.replace('/', '__')}|{group_model}", {})
+        tok_total = tok.get("sum_total", 0)
+        tok_per_finding = round(tok_total / found_sum) if (tok_total and found_sum) else None
+        tok_per_audit = round(tok_total / tok["n"]) if tok.get("n") else None
+
         entry = {
             "skill": skill_name,
             "skill_path": skill_path,
@@ -235,6 +252,9 @@ def aggregate(gradings: list) -> dict:
             "found": found_sum,
             "total": total_sum,
             "false_positives": fp_sum,
+            "tokens_total": tok_total or None,
+            "tokens_per_audit": tok_per_audit,
+            "tokens_per_finding": tok_per_finding,
             "duration": compute_stats(durations) if durations else None,
             "cost_usd": compute_stats(costs) if costs else None,
             "tokens": compute_stats(total_tokens_list) if total_tokens_list else None,
@@ -293,8 +313,8 @@ def main():
     print("Headline board: core_subset (27 evals), source-only single pass, "
           "ranked by MICRO-recall.")
     print(f"\nLeaderboard:")
-    header = (f"{'Rank':<6}{'Skill':<33}{'Model':<9}{'Recall':<9}"
-              f"{'Prec':<9}{'F1':<9}{'Found':<9}{'N':<4}")
+    header = (f"{'Rank':<5}{'Skill':<31}{'Model':<8}{'Recall':<8}{'Prec':<7}"
+              f"{'FP':<6}{'Found':<8}{'Tok/find':<10}{'N':<4}")
     print(header)
     print("-" * len(header))
     for entry in benchmark["leaderboard"]:
@@ -302,11 +322,14 @@ def main():
         if isinstance(model, list):
             model = ",".join(model)
         model_short = ("opus" if "opus" in model else
-                       "sonnet" if "sonnet" in model else (model[:8] or "-"))
+                       "sonnet" if "sonnet" in model else (model[:7] or "-"))
         found_str = f"{entry.get('found', 0)}/{entry.get('total', 0)}"
-        print(f"{entry['rank']:<6}{entry['skill']:<33}{model_short:<9}"
-              f"{entry['recall']['mean']:<9.1%}{entry['precision']['mean']:<9.1%}"
-              f"{entry['f1']['mean']:<9.1%}{found_str:<9}{entry['evals_run']:<4}")
+        tpf = entry.get("tokens_per_finding")
+        tpf_str = f"{tpf/1000:,.0f}K" if tpf else "-"
+        print(f"{entry['rank']:<5}{entry['skill']:<31}{model_short:<8}"
+              f"{entry['recall']['mean']:<8.1%}{entry['precision']['mean']:<7.1%}"
+              f"{entry.get('false_positives', 0):<6}{found_str:<8}{tpf_str:<10}"
+              f"{entry['evals_run']:<4}")
 
 
 if __name__ == "__main__":
