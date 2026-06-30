@@ -1,8 +1,8 @@
 # Large run outputs - track results/benchmark.json and history, not raw runs
 results/runs/
 
-# Site data is generated
-site/data.json
+# Site data (site/data.json) is committed so GitHub Pages can serve the
+# leaderboard statically — regenerate it with scripts/aggregate.py.
 
 # Python
 __pycache__/
