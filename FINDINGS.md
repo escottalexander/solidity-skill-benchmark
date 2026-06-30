@@ -91,7 +91,18 @@ Micro-recall (found / 167) per skill, both models, source-only single pass:
 - **Bottom:** scv-scan, qs-bsa.
 - On *macro-F1* the whole board is a tie and the order differs from micro
   (e.g. sc-auditor tops Sonnet macro-F1 but is mid-pack on micro-recall). Do not
-  quote a strict 1–6 order.
+  quote a strict 1–6 order. (At 5 evals the pilot's macro-F1 leader was pashov;
+  at 27 evals ethskills/audit leads micro-recall — the reshuffle that proves
+  small benchmarks mislead.)
+
+**Within-model separable pairs** (paired per-finding McNemar, |z|>1.96 — the only
+statistically real gaps; everything else is a tie):
+- *Sonnet (4 of 15 pairs):* eth/audit > scv-scan (z=2.60); eth/audit > eth/security
+  (z=2.06); eth/audit > qs-bsa (z=2.45); pashov > scv-scan (z=1.96).
+- *Opus (5 of 15 pairs):* eth/audit > scv-scan (z=2.47); eth/audit > sc-auditor
+  (z=2.04); eth/audit > qs-bsa (z=3.53); eth/security > scv-scan (z=2.04);
+  eth/security > qs-bsa (z=2.33).
+- eth/audit is the only skill statistically ahead of others on **both** models.
 
 ## 4. Model effect: Sonnet vs Opus
 
@@ -130,8 +141,18 @@ candidates compiled). Sonnet, 6 skills, tools-off vs tools-on, same evals.
 
 - **100% of tool-enabled agents actually ran Slither AND forge** (verified by
   transcript scan), so the comparison is valid. Halmos went unused (nobody wrote
-  a fuzz harness).
-- Per-skill recall lift ranged **−5.4% to +8.1%**, none significant.
+  a fuzz harness); Mythril could not be installed on Python 3.14 (so the suite
+  was Slither + Halmos + Foundry).
+- Per-skill recall lift (tools off → on, same 23 evals), none significant:
+
+  | Skill | off | on | lift |
+  |---|---|---|---|
+  | scv-scan | 37.8% | 45.9% | +8.1% |
+  | sc-auditor | 43.2% | 48.6% | +5.4% |
+  | qs-bsa | 35.1% | 40.5% | +5.4% |
+  | ethskills/security | 43.2% | 43.2% | 0.0% |
+  | ethskills/audit | 48.6% | 45.9% | −2.7% |
+  | pashov | 51.4% | 45.9% | −5.4% |
 - **Pooled: tools caught +20 findings source-only missed, source-only caught
   +16 tools missed → z=0.67, a statistical TIE.**
 - Likely cause: Slither flags pattern bugs (reentrancy, unchecked calls) a
@@ -203,6 +224,7 @@ per-finding McNemar of each skill vs the no-skill baseline, on the same 27 evals
 - Net: on this benchmark, these Solidity audit skills do not meaningfully
   outperform simply asking the model to audit. ethskills/audit is the best *of
   the skills*, but "best skill" ≈ "no skill" here.
+- Baseline caught 31/167 findings on Sonnet, 45/167 on Opus.
 
 ## 9. Caveats & limitations
 
@@ -234,3 +256,23 @@ per-finding McNemar of each skill vs the no-skill baseline, on the same 27 evals
 Eval set: `evals/core_subset.json` (skills) and `evals/tooling_set.json`
 (compilable). Raw runs live under `results/runs/<skill>/<eval>/<timestamp>/`
 (gitignored).
+
+## 11. Data provenance & scale
+
+**816 graded audits** on disk (each = one audit + one grading), Sonnet 4.6 and
+Opus 4.8, all source-only single pass unless noted. Run timestamps map to
+experiments as follows (navigate `results/runs/<skill>/<eval>/<timestamp>/`):
+
+| Timestamp prefix | Experiment | Cells |
+|---|---|---|
+| `20260627T110953`, `20260627T113545` | Sonnet skill leaderboard (pass 1) | 162 |
+| `20260628T001622` | Opus skill leaderboard | 162 |
+| `20260629T114219…D` / `…E` | Tooling A/B — tools-off (D) / tools-on (E), 23 compilable evals | 138 / 138 |
+| `20260630T004431…P2` | Sonnet pass 2 (multi-pass study) | 162 |
+| `20260630T122555…Bsonnet` / `…Bopus` | No-skill baseline | 27 / 27 |
+
+Per-run identity (`model`, `tooling`, `is_baseline`, `pass`) lives in each run's
+`run_metadata.json`; the analysis scripts select on those fields, so re-running
+any script reproduces the corresponding table above. Tokens were not persisted
+per run (only one early run has them); `token_usage.py` reconstructs them from
+the agent transcripts under the session's `subagents/workflows/` directory.
