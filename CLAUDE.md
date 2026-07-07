@@ -170,6 +170,7 @@ Only **full-audit skills** (complete vulnerability list) are comparable on recal
 | `scripts/discover_skills.py` | Scan skills/ for SKILL.md, update skills.json |
 | `scripts/token_usage.py` / `persist_token_usage.py` | Token reconstruction from transcripts (legacy board) |
 | `scripts/backfill_tokens.py` | Backfill per-run auditor tokens from transcripts into run metadata (`--experiment`, repeatable) |
+| `scripts/export_contracts.py` | Publish an eval set's contract sources as site/contracts/ pages (never findings.json); re-run when the board's eval set changes |
 | legacy: `run_eval.py`, `grade.py`, `run_benchmark.sh`, `setup_*.py` | Superseded by prepare_run.py; kept for provenance |
 
 ## Key Design Principles

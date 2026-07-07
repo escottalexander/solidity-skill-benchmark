@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vfp_00112 — audited contracts</title>
+<style>
+  :root { --bg:#fff; --text:#1a1a2e; --muted:#667; --surface:#f6f7f9; --border:#dde; --accent:#4a6cf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1117; --text:#e6e6ef; --muted:#99a; --surface:#181b24; --border:#2a2e3d; --accent:#7a95ff; }
+  }
+  body { margin:0 auto; max-width:1100px; padding:2rem 1.5rem; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+  h1 { font-size:1.4rem; margin:0 0 0.25rem; }
+  h2 { font-size:1rem; margin:2rem 0 0.5rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .meta, footer { color:var(--muted); font-size:0.9rem; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  nav { margin:1rem 0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85rem; }
+  nav a { margin-right:1rem; }
+  pre { background:var(--surface); border:1px solid var(--border); border-radius:8px;
+        padding:1rem; overflow-x:auto; font-size:0.8rem; line-height:1.45; }
+</style>
+</head>
+<body>
+<p><a href="../index.html">&larr; leaderboard</a></p>
+<h1>vfp_00112</h1>
+<p class="meta">Jovay Rollup Contracts Audit.md &middot; 2 contract files &middot; the exact sources given to every
+auditor run of this eval in the Solidity Skill Benchmark.</p>
+<nav><a href="#BatchHeaderCodec.sol">BatchHeaderCodec.sol</a><a href="#Rollup.sol">Rollup.sol</a></nav>
+<section id="BatchHeaderCodec.sol"><h2>BatchHeaderCodec.sol</h2><pre><code>// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.16;
+
+// solhint-disable no-inline-assembly
+/// @dev Below is the encoding for `Chunk`, total 40*n+1+m bytes.
+/// ```text
+///   * Field           Bytes       Type            Index       Comments
+///   * numBlocks       1           uint8           0           The number of blocks in this chunk
+///   * block[0]        40          BlockContext    1           The first block in this chunk
+///   * ......
+///   * block[i]        40          BlockContext    40*i+1      The (i+1)&#x27;th block in this chunk
+///   * ......
+///   * block[n-1]      40          BlockContext    40*n-39     The last block in this chunk
+///   * l2Transactions  dynamic     bytes           40*n+1      l2txRlpdatalength|l2txRlpdata|l2txRlpdatalength|l2txRlpdata| ...
+/// ```
+///
+/// @dev Below is the encoding for `BlockContext`, total 40 bytes.
+/// ```text
+///   * Field                   Bytes      Type         Index  Comments
+///   * spec_version            4          uint32       0      The spec_version of this block.
+///   * blockNumber             8          uint64       4      The height of this block.
+///   * timestamp               8          uint64       12     The timestamp of this block.
+///   * baseFee                 8          uint64       20     The base fee of this block. Currently, it is always 0, because we disable EIP-1559.
+///   * gasLimit                8          uint64       28     The gas limit of this block.
+///   * numTransactions         2          uint16       36     The number of transactions in this block, both L1 &amp; L2 txs.
+///   * numL1Messages           2          uint16       38     The number of l1 messages in this block.
+/// ```
+
+/// @dev Below is the encoding for `BatchHeader` V0, total 89 + ceil(l1MessagePopped / 256) * 32 bytes.
+/// ```text
+///   * Field                   Bytes       Type        Index   Comments
+///   * version                 1           uint8       0       The batch version
+///   * batchIndex              8           uint64      1       The index of the batch
+///   * L1MsgRollingHash        32          bytes32     9       Number of total L1 message popped after the batch
+///   * dataHash                32          bytes32     41      The data hash of the batch
+///   * parentBatchHash         32          bytes32     73      The parent batch hash
+/// ```
+library BatchHeaderCodec {
+    /// @dev The length of fixed parts of the batch header.
+    uint256 internal constant BATCH_HEADER_FIXED_LENGTH = 105;
+
+    /// @notice Load batch header in calldata to memory.
+    /// @param _batchHeader The encoded batch header bytes in calldata.
+    /// @return batchPtr The start memory offset of the batch header in memory.
+    /// @return length The length in bytes of the batch header.
+    function loadAndValidate(bytes calldata _batchHeader) internal pure returns (uint256 batchPtr, uint256 length) {
+        length = _batchHeader.length;
+        require(length == BATCH_HEADER_FIXED_LENGTH, &quot;INVALID_PARAMETER : batchHeader is invalid&quot;);
+
+        // copy batch header to memory.
+        assembly {
+            batchPtr := mload(0x40)
+            calldatacopy(batchPtr, _batchHeader.offset, length)
+            mstore(0x40, add(batchPtr, length))
+        }
+    }
+
+    /// @notice Get the version of the batch header.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @return _version The version of the batch header.
+    function version(uint256 batchPtr) internal pure returns (uint256 _version) {
+        assembly {
+            _version := shr(248, mload(batchPtr))
+        }
+    }
+
+        /// @notice Get the batch index of the batch.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @return _batchIndex The batch index of the batch.
+    function batchIndex(uint256 batchPtr) internal pure returns (uint256 _batchIndex) {
+        assembly {
+            _batchIndex := shr(192, mload(add(batchPtr, 1)))
+        }
+    }
+
+    /// @notice Get the number of L1 messages popped before this batch.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @return _l1RollingHash The the number of L1 messages popped before this batch.
+    function l1RollingHash(uint256 batchPtr) internal pure returns (bytes32 _l1RollingHash) {
+        assembly {
+            _l1RollingHash := mload(add(batchPtr, 9))
+        }
+    }
+
+    /// @notice Get the data hash of the batch header.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @return _dataHash The data hash of the batch header.
+    function dataHash(uint256 batchPtr) internal pure returns (bytes32 _dataHash) {
+        assembly {
+            _dataHash := mload(add(batchPtr, 41))
+        }
+    }
+
+    /// @notice Get the parent batch hash of the batch header.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @return _parentBatchHash The parent batch hash of the batch header.
+    function parentBatchHash(uint256 batchPtr) internal pure returns (bytes32 _parentBatchHash) {
+        assembly {
+            _parentBatchHash := mload(add(batchPtr, 73))
+        }
+    }
+
+    /// @notice Store the version of batch header.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @param _version The version of batch header.
+    function storeVersion(uint256 batchPtr, uint256 _version) internal pure {
+        assembly {
+            mstore8(batchPtr, _version)
+        }
+    }
+
+    /// @notice Store the batch index of batch header.
+    /// @dev Because this function can overwrite the subsequent fields, it must be called before
+    /// `storeL1MessagePopped`, `storeTotalL1MessagePopped`, and `storeDataHash`.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @param _batchIndex The batch index.
+    function storeBatchIndex(uint256 batchPtr, uint256 _batchIndex) internal pure {
+        assembly {
+            mstore(add(batchPtr, 1), shl(192, _batchIndex))
+        }
+    }
+
+    /// @notice Store the total number of L1 messages popped after current batch to batch header.
+    /// @dev Because this function can overwrite the subsequent fields, it must be called before
+    /// `storeDataHash`.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @param _l1RollingHash The total number of L1 messages popped after current batch.
+    function storeL1RollingHash(uint256 batchPtr, bytes32 _l1RollingHash) internal pure {
+        assembly {
+            mstore(add(batchPtr, 9), _l1RollingHash)
+        }
+    }
+
+    /// @notice Store the data hash of batch header.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @param _dataHash The data hash.
+    function storeDataHash(uint256 batchPtr, bytes32 _dataHash) internal pure {
+        assembly {
+            mstore(add(batchPtr, 41), _dataHash)
+        }
+    }
+
+    /// @notice Store the parent batch hash of batch header.
+    /// @param batchPtr The start memory offset of the batch header in memory.
+    /// @param _parentBatchHash The parent batch hash.
+    function storeParentBatchHash(uint256 batchPtr, bytes32 _parentBatchHash) internal pure {
+        assembly {
+            mstore(add(batchPtr, 73), _parentBatchHash)
+        }
+    }
+
+    /// @notice Compute the batch hash.
+    /// @dev Caller should make sure that the encoded batch header is correct.
+    ///
+    /// @param batchPtr The memory offset of the encoded batch header.
+    /// @param length The length of the batch.
+    /// @return _batchHash The hash of the corresponding batch.
+    function computeBatchHash(uint256 batchPtr, uint256 length) internal pure returns (bytes32 _batchHash) {
+        // in the current version, the hash is: keccak(BatchHeader without timestamp)
+        assembly {
+            _batchHash := keccak256(batchPtr, length)
+        }
+    }
+}
+</code></pre></section>
+<section id="Rollup.sol"><h2>Rollup.sol</h2><pre><code>// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import &quot;../interfaces/IRollup.sol&quot;;
+import &quot;../libraries/codec/BatchHeaderCodec.sol&quot;;
+import &quot;../libraries/verifier/ITeeRollupVerifier.sol&quot;;
+import &quot;../libraries/verifier/IZkRollupVerifier.sol&quot;;
+
+import {OwnableUpgradeable} from &quot;@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol&quot;;
+import {Initializable} from &quot;@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol&quot;;
+import {PausableUpgradeable} from &quot;@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol&quot;;
+import {IL1MailQueue} from &quot;../interfaces/IL1MailQueue.sol&quot;;
+
+
+contract Rollup is IRollup, OwnableUpgradeable, PausableUpgradeable {
+
+    error NotSupportZkProof();
+
+    /// @notice The max number of txs in a chunk, fill by bytes32(0) if not enough.
+    uint32 public maxTxsInChunk;
+
+    /// @notice The max number of blocks in a chunk, not need fill by (0) if not enough.
+    uint32 public maxBlockInChunk;
+
+    /// @notice The max tx data size in a chunk;
+    uint32 public maxCallDataInChunk;
+
+    /// @notice The max zk circle in a chunk;
+    uint32 public maxZkCircleInChunk;
+
+    /// @notice The max tx data (byte) limit in L1;
+    uint32 public l1BlobNumberLimit;
+
+    /// @notice Time limit between two rollups;
+    uint64 public rollupTimeLimit;
+
+    /// @notice The chain id of the corresponding layer 2 chain.
+    uint64 public layer2ChainId;
+
+    // The batch index that has been committed;
+    uint256 public lastCommittedBatch;
+
+    // The batch index that has been zk verified;
+    uint256 public lastZkVerifiedBatch;
+
+    // The batch index that has been tee verified;
+    uint256 public lastTeeVerifiedBatch;
+
+    // Record the batchhash corresponding to the batch
+    mapping(uint256 =&gt; bytes32) public committedBatches;
+
+    // Record the stateroot corresponding to each batch of L2 and the stateroot of the last block of the batch
+    mapping(uint256 =&gt; bytes32) public finalizedStateRoots;
+
+    // batchindex corresponds to the root of the L2withroot message tree; it is used to verify L2 transactions;
+    mapping(uint256 =&gt; bytes32) public l2MsgRoots;
+
+    // total pop l1msg of batch;
+    mapping(uint256 =&gt; uint256) public l1MsgCount;
+
+    address public zk_verifier;  // zk_verifier contract address, compatibility operations such as upgrades are handled by the verifier contract
+    address public tee_verifier;  // tee_verifier contract address, compatibility operations such as upgrades are handled by the verifier contract
+    address public l1_mail_box;   // mail box address; L1 Msg Rolling hash storage in it
+
+    /// @notice Whether an account is a relayer.
+    mapping(address =&gt; bool) public isRelayer;
+
+    /**********************
+     * Function Modifiers *
+     **********************/
+
+    modifier OnlyRelayer() {
+        // @note In the decentralized mode, it should be only called by a list of validator.
+        require(isRelayer[_msgSender()], &quot;INVALID_PERMISSION : sender is not relayer&quot;);
+        _;
+    }
+
+    /***************
+     * Constructor *
+     ***************/
+
+//    /// @notice Constructor implementation .
+    constructor(
+    ) {
+        _disableInitializers();
+    }
+
+    function initialize(
+        uint64 _chainId,
+        address _zk_verifier,
+        address _tee_verifier,
+        address _l1_mail_box,
+        uint32 _maxTxsInChunk,
+        uint32 _maxBlockInChunk,
+        uint32 _maxCallDataInChunk,
+        uint32 _maxZkCircleInChunk,
+        uint32 _l1BlobNumberLimit,
+        uint32 _rollupTimeLimit
+    ) public initializer {
+        OwnableUpgradeable.__Ownable_init();
+        PausableUpgradeable.__Pausable_init();
+
+        require(_zk_verifier != address(0) || _tee_verifier != address(0), &quot;INVALID_PARAMETER : must specify one verifier address&quot;);
+        layer2ChainId = _chainId;
+        zk_verifier = _zk_verifier;
+        tee_verifier = _tee_verifier;
+        l1_mail_box = _l1_mail_box;
+        maxTxsInChunk = _maxTxsInChunk;
+        maxBlockInChunk = _maxBlockInChunk;
+        maxCallDataInChunk = _maxCallDataInChunk;
+        maxZkCircleInChunk = _maxZkCircleInChunk;
+        l1BlobNumberLimit = _l1BlobNumberLimit;
+        rollupTimeLimit = _rollupTimeLimit;
+    }
+
+    /*****************************
+     * Public Mutating Functions *
+     *****************************/
+    /// @notice Import layer 2 genesis block
+    /// @param _batchHeader The header of the genesis batch.
+    /// @param _stateRoot The state root of the genesis block.
+    function importGenesisBatch(bytes calldata _batchHeader, bytes32 _stateRoot) external onlyOwner {
+        // check genesis batch header length
+        require(_stateRoot != bytes32(0), &quot;INVALID_PARAMETER : state root is zero&quot;);
+
+        // check whether the genesis batch is imported
+        require(finalizedStateRoots[0] == bytes32(0), &quot;INVALID_PARAMETER : genesis batch is imported&quot;);
+
+        (uint256 memPtr, , bytes32 _batchHash, ) = _loadBatchHeader(_batchHeader);
+
+        // check all fields except `dataHash` and `lastBlockHash` are zero
+        unchecked {
+            uint256 sum = BatchHeaderCodec.version(memPtr) +
+                                BatchHeaderCodec.batchIndex(memPtr);
+            require(sum == 0, &quot;INVALID_PARAMETER : genesis batch has no zero field&quot;);
+            require(BatchHeaderCodec.l1RollingHash(memPtr) == bytes32(0), &quot;INVALID_PARAMETER : genesis batch rolling hash must be zero&quot;);
+            require(BatchHeaderCodec.dataHash(memPtr) != bytes32(0), &quot;INVALID_PARAMETER : genesis batch data hash is zero&quot;);
+            require(BatchHeaderCodec.parentBatchHash(memPtr) == bytes32(0), &quot;INVALID_PARAMETER : genesis parent batch hash must be zero&quot;);
+        }
+        committedBatches[0] = _batchHash;
+        finalizedStateRoots[0] = _stateRoot;
+        lastCommittedBatch = 0;
+        lastZkVerifiedBatch = 0;
+        lastTeeVerifiedBatch = 0;
+        l1MsgCount[0] = 0;
+        l2MsgRoots[0] = bytes32(0);
+        emit CommitBatch( 0, _batchHash);
+    }
+
+    /// @inheritdoc IRollup
+    function commitBatch(
+        uint8 _version,
+        uint256 _batchIndex,
+        uint256 _totalL1MessagePopped
+    ) external override OnlyRelayer whenNotPaused {
+        require(_batchIndex == lastCommittedBatch + 1, &quot;INVALID_PARAMETER : commit batch one by one&quot;);
+
+        uint256 BATCH_HEADER_LENGTH = BatchHeaderCodec.BATCH_HEADER_FIXED_LENGTH;
+        // init empty batch
+        uint256 batchPtr;
+        assembly {
+            batchPtr := mload(0x40)
+            mstore(0x40, add(batchPtr, BATCH_HEADER_LENGTH))
+        }
+
+        BatchHeaderCodec.storeVersion(batchPtr, _version);
+        BatchHeaderCodec.storeBatchIndex(batchPtr, _batchIndex);
+        BatchHeaderCodec.storeL1RollingHash(
+            batchPtr,
+            IL1MailQueue(l1_mail_box).getMsg(_totalL1MessagePopped)
+        );
+        BatchHeaderCodec.storeDataHash(batchPtr, _getBlobDataHash());
+        BatchHeaderCodec.storeParentBatchHash(batchPtr, committedBatches[_batchIndex - 1]);
+        // compute batch hash
+        bytes32 _batchHash = BatchHeaderCodec.computeBatchHash(
+            batchPtr,
+            BatchHeaderCodec.BATCH_HEADER_FIXED_LENGTH
+        );
+
+        committedBatches[_batchIndex] = _batchHash;
+        lastCommittedBatch =  _batchIndex;
+        l1MsgCount[_batchIndex] = _totalL1MessagePopped;
+        emit CommitBatch(_batchIndex, _batchHash);
+    }
+
+    /// @inheritdoc IRollup
+    function verifyBatch(
+        uint8 _prove_type,
+        bytes calldata _batchHeader,
+        bytes32 _postStateRoot,
+        bytes32 _l2MsgRoot,
+        bytes calldata _proof
+    ) external override OnlyRelayer whenNotPaused {
+        require(_prove_type == 0 || _prove_type == 1, &quot;INVALID_PARAMETER : invalid prove type&quot;);
+        require(_postStateRoot != bytes32(0), &quot;INVALID_PARAMETER : invalid state root&quot;);
+        uint256 _verifiedBatchIndex = _prove_type == 0 ? lastZkVerifiedBatch : lastTeeVerifiedBatch;
+
+        // compute pending batch hash and verify
+        (
+            ,
+            uint256 _batchIndex,
+            bytes32 _batchHash,
+        ) = _loadBatchHeader(_batchHeader);
+        require(_batchIndex == _verifiedBatchIndex + 1, &quot;INVALID_PARAMETER : invalid verify batch index, must one by one&quot;);
+        require(committedBatches[_batchIndex] != bytes32(0) &amp;&amp; committedBatches[_batchIndex] ==  _batchHash, &quot;INVALID_PARAMETER : invalid commit batch hash&quot;);
+        require(finalizedStateRoots[_batchIndex] == bytes32(0) || finalizedStateRoots[_batchIndex] == _postStateRoot, &quot;INVALID_PARAMETER : invalid verify state root&quot;);
+        bytes memory _publicInput = abi.encodePacked(
+            layer2ChainId,
+            finalizedStateRoots[_verifiedBatchIndex], // _prevStateRoot
+            _postStateRoot,
+            _batchHash,
+            _l2MsgRoot
+        );
+        if (_prove_type == 0) {
+            revert NotSupportZkProof();
+        } else if (_prove_type == 1) {
+            _verifyTeeProof(_proof, _publicInput);
+        }
+
+        // TODO : add finalize check
+//        if ((_prove_type == 0 &amp;&amp; lastTeeVerifiedBatch &gt;= _batchIndex) || (_prove_type == 1 &amp;&amp; lastZkVerifiedBatch &gt;= _batchIndex)) {
+        // after verify update contract storage
+        if (finalizedStateRoots[_batchIndex] == bytes32(0)) {
+            finalizedStateRoots[_batchIndex] = _postStateRoot;
+        }
+        l2MsgRoots[_batchIndex] = _l2MsgRoot;
+        IL1MailQueue(l1_mail_box).popMsgs(l1MsgCount[_batchIndex]);
+//        }
+        emit VerifyBatch(_prove_type, _batchIndex, _batchHash, _postStateRoot, _l2MsgRoot);
+    }
+
+    /// @inheritdoc IRollup
+    /// @dev If the owner want to revert a sequence of batches by sending multiple transactions,
+    ///      make sure to revert recent batches first.
+    /// can only revert L2; L1 can not be revert;
+    function revertBatches(uint256 _newLastBatchIndex) external override onlyOwner {
+        require(_newLastBatchIndex &lt; lastCommittedBatch, &quot;INVALID_PARAMETER : revert lastCommitBatchIndex must smaller than current&quot;);
+        require(lastCommittedBatch - _newLastBatchIndex &lt;= 100, &quot;INVALID_PARAMETER : revert block number must smaller than 100 for gas limit&quot;);
+        require(_newLastBatchIndex &gt;= lastZkVerifiedBatch, &quot;INVALID_PARAMETER : revert block number bigger than last zk verify block number&quot;);
+        require(_newLastBatchIndex &gt;= lastTeeVerifiedBatch, &quot;INVALID_PARAMETER : revert block number bigger than last tee verify block number&quot;);
+
+        // actual revert
+        for (uint256 _batchIndex = lastCommittedBatch; _batchIndex &gt; _newLastBatchIndex; --_batchIndex) {
+            committedBatches[_batchIndex] = bytes32(0);
+        }
+        lastCommittedBatch = _newLastBatchIndex;
+    }
+
+    function getL2MsgRoot(uint256 batch_index) external view override returns (bytes32) {
+        return l2MsgRoots[batch_index];
+    }
+
+    function _getBlobDataHash() internal virtual returns (bytes32 _blobDataHash) {
+        uint32 blobNumberLimit = l1BlobNumberLimit;
+        assembly {
+            let dataStart := mload(0x40)
+            let offset := 0
+            let i := 0
+            for {} lt(i, blobNumberLimit) { i := add(i, 1) } {
+                let hash := blobhash(i)
+                if iszero(hash) {
+                    break
+                }
+                mstore(add(dataStart, offset), hash)
+                offset := add(offset, 0x20)
+            }
+            _blobDataHash := keccak256(dataStart, offset)
+            mstore(0x40, add(dataStart, offset))
+        }
+        emit BlobDataHash(_blobDataHash);
+    }
+
+    /// @dev Internal function to load batch header from calldata to memory.
+    /// @param _batchHeader The batch header in calldata.
+    /// @return memPtr The start memory offset of loaded batch header.
+    /// @return _batchIndex The index of the loaded batch header.
+    /// @return _batchHash The hash of the loaded batch header.
+    /// @return _l1MsgRollingHash The rolling hash of L1 msg on this batch.
+    function _loadBatchHeader(
+        bytes calldata _batchHeader
+    ) internal pure returns (uint256 memPtr, uint256 _batchIndex, bytes32 _batchHash, bytes32 _l1MsgRollingHash) {
+        // load to memory
+        uint256 _length;
+        (memPtr, _length) = BatchHeaderCodec.loadAndValidate(_batchHeader);
+        // compute batch hash
+        _batchHash = BatchHeaderCodec.computeBatchHash(memPtr, _length);
+        _batchIndex = BatchHeaderCodec.batchIndex(memPtr);
+        _l1MsgRollingHash = BatchHeaderCodec.l1RollingHash(memPtr);
+    }
+
+    function _verifyTeeProof(bytes memory _proof, bytes memory _publicInput) internal {
+        bytes32 _commitment = keccak256(_publicInput);
+        (uint32 error_code, bytes32 commitment) = ITeeRollupVerifier(tee_verifier).verifyProof(_proof);
+        require(error_code == 0, &quot;ERROR : verify failed&quot;);
+        require(commitment == _commitment, &quot;ERROR : error tee commitment for verify&quot;);
+        lastTeeVerifiedBatch = lastTeeVerifiedBatch + 1;
+    }
+
+    /************************
+     * Restricted Functions *
+     ************************/
+
+    /// @notice Add an account to the relayer list.
+    /// @param _account The address of account to add.
+    function addRelayer(address _account) external onlyOwner {
+        // @note Currently many external services rely on EOA sequencer to decode metadata directly from tx.calldata.
+        // So we explicitly make sure the account is EOA.
+        require(_account.code.length == 0, &quot;INVALID_PERMISSION : relayer account must be a eoa&quot;);
+
+        isRelayer[_account] = true;
+    }
+
+    /// @notice Remove an account from the relayer list.
+    /// @param _account The address of account to remove.
+    function removeRelayer(address _account) external onlyOwner {
+        isRelayer[_account] = false;
+    }
+
+    /// @notice Pause the contract
+    /// @param _status The pause status to update.
+    function setPause(bool _status) external onlyOwner {
+        if (_status) {
+            _pause();
+        } else {
+            _unpause();
+        }
+    }
+
+    /// @notice Set maxTxsInChunk of tx size in a chunk.
+    /// @param _maxTxsInChunk The number of tx size in a chunk.
+    function setMaxTxsInChunk(uint32 _maxTxsInChunk) external onlyOwner {
+        maxTxsInChunk = _maxTxsInChunk;
+    }
+
+    /// @notice Set maxBlockInChunk of block size in a chunk.
+    /// @param _maxBlockInChunk The number of block size in a chunk.
+    function setMaxBlockInChunk(uint32 _maxBlockInChunk) external onlyOwner {
+        maxBlockInChunk = _maxBlockInChunk;
+    }
+
+    /// @notice Set maxCallDataInChunk of tx data size in a chunk.
+    /// @param _maxCallDataInChunk The number of tx data size in a chunk.
+    function setMaxCallDataInChunk(uint32 _maxCallDataInChunk) external onlyOwner {
+        maxCallDataInChunk = _maxCallDataInChunk;
+    }
+
+    /// @notice Set l1BlobNumberLimit of the limit of l1 tx data size.
+    /// @param _l1BlobNumberLimit The limit of L1 tx data size.
+    function setL1BlobNumberLimit(uint32 _l1BlobNumberLimit) external onlyOwner {
+        l1BlobNumberLimit = _l1BlobNumberLimit;
+    }
+
+    /// @notice Set rollupTimeLimit of the limit of l1 tx data size.
+    /// @param _rollupTimeLimit The limit of L1 tx data size.
+    function setRollupTimeLimit(uint32 _rollupTimeLimit) external onlyOwner {
+        rollupTimeLimit = _rollupTimeLimit;
+    }
+
+    /// @notice Set setL2ChainId
+    /// @param _layer2ChainId The chain Id of L2.
+    function setL2ChainId(uint64 _layer2ChainId) external onlyOwner {
+        layer2ChainId = _layer2ChainId;
+    }
+
+    /// @notice Set tee_verifier
+    /// @param _teeVerifierAddress The verifier address of tee.
+    function setTeeVerifierAddress(address _teeVerifierAddress) external onlyOwner whenPaused {
+        require(_teeVerifierAddress != address(0), &quot;INVALID_PARAMETER : must specify one verifier address&quot;);
+        tee_verifier = _teeVerifierAddress;
+    }
+
+    /// @notice Set zk_verifier
+    /// @param _zkVerifierAddress The verifier address of tee.
+    function setZkVerifierAddress(address _zkVerifierAddress) external onlyOwner whenPaused {
+        require(_zkVerifierAddress != address(0), &quot;INVALID_PARAMETER : must specify one verifier address&quot;);
+        zk_verifier = _zkVerifierAddress;
+    }
+}</code></pre></section>
+<footer><p>Ground-truth findings for this eval are intentionally not published.</p></footer>
+</body>
+</html>

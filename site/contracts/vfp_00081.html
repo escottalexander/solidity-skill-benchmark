@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vfp_00081 — audited contracts</title>
+<style>
+  :root { --bg:#fff; --text:#1a1a2e; --muted:#667; --surface:#f6f7f9; --border:#dde; --accent:#4a6cf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1117; --text:#e6e6ef; --muted:#99a; --surface:#181b24; --border:#2a2e3d; --accent:#7a95ff; }
+  }
+  body { margin:0 auto; max-width:1100px; padding:2rem 1.5rem; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+  h1 { font-size:1.4rem; margin:0 0 0.25rem; }
+  h2 { font-size:1rem; margin:2rem 0 0.5rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .meta, footer { color:var(--muted); font-size:0.9rem; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  nav { margin:1rem 0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85rem; }
+  nav a { margin-right:1rem; }
+  pre { background:var(--surface); border:1px solid var(--border); border-radius:8px;
+        padding:1rem; overflow-x:auto; font-size:0.8rem; line-height:1.45; }
+</style>
+</head>
+<body>
+<p><a href="../index.html">&larr; leaderboard</a></p>
+<h1>vfp_00081</h1>
+<p class="meta">Spectral (Autonomus Agents Contracts) - Zenith Audit Report.pdf &middot; 1 contract file &middot; the exact sources given to every
+auditor run of this eval in the Solidity Skill Benchmark.</p>
+<nav><a href="#OctoDistributor.sol">OctoDistributor.sol</a></nav>
+<section id="OctoDistributor.sol"><h2>OctoDistributor.sol</h2><pre><code>// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.20;
+
+import &quot;@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol&quot;;
+import &quot;@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol&quot;;
+import &quot;@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol&quot;;
+import &quot;@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol&quot;;
+import &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import &quot;@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol&quot;;
+import &quot;../interfaces/IAutonomousAgentDeployer.sol&quot;;
+import &quot;../interfaces/IAgenticCompany.sol&quot;;
+import &quot;../interfaces/IAgenticCompanyFactory.sol&quot;;
+import &quot;../interfaces/IANSReverseRegistrar.sol&quot;;
+import &quot;../interfaces/IANSResolver.sol&quot;;
+import &quot;../interfaces/IAgentBalances.sol&quot;;
+import &quot;../interfaces/IAgentToken.sol&quot;;
+
+contract OctoDistributor is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable
+{
+    using SafeERC20Upgradeable for IERC20Upgradeable;
+    using SafeERC20 for IERC20;
+
+    struct SystemAddresses {
+        IAutonomousAgentDeployer autonomousDeployer;
+        IAgenticCompanyFactory agenticCompanyFactory;
+        IANSResolver ansResolver;
+        IANSReverseRegistrar ansReverseRegistrar;
+        address spectralTreasury;
+    }
+
+    uint256 public spectraCompanyIndex;
+
+    IERC20Upgradeable public spectral_token;
+    IERC20 public usdc_token;
+
+    uint8 public version;
+    address public admin;
+    uint256 public constant PRECISION = 10**4;
+
+    enum Parameter {
+        TRADING_REWARDS_TREASURY_CUT,
+        TRADING_REWARDS_CREATOR_CUT,
+        TRADING_REWARDS_SPECTRA_CUT,
+        TRADING_REWARDS_EMPLOYEES_CUT
+    }
+
+    struct UserBalances {
+        uint256 spectral;
+        uint256 usdc;
+        mapping(address =&gt; uint256 balance) agent_tokens_list;
+        mapping(address =&gt; uint256 index) agent_tokens_indecies;
+        address[] agent_tokens;
+    }
+
+    struct HiringDistribution {
+        bytes32 recipientAnsNode;
+        uint256 specAmount;
+        uint256 agentTokenAmount;
+        uint256 usdcAmount;
+    }
+
+    SystemAddresses public systemAddresses;
+    mapping(Parameter =&gt; uint256) public parameters;
+    mapping(address =&gt; UserBalances) public userBalances;
+    mapping(address =&gt; address) public agentCreators;
+
+    event Withdraw(address indexed user, address indexed token, uint256 amount);
+    event DistributeHiringBonuses(
+        address company,
+        uint256 count,
+        address agentToken,
+        uint256 totalSpec,
+        uint256 totalAgentToken,
+        uint256 totalUsdc,
+        HiringDistribution[] distributions
+    );
+    event DistributeSpectraTradingRewards (
+        address agentToken,
+        uint256 usdcAmount,
+        address[] beneficiaries,
+        uint256[] amounts
+    );
+    event DistributeGenericTradingRewards (
+        address agentToken,
+        uint256 usdcAmount
+    );
+    event SetParameter(Parameter parameter, uint256 value);
+    event SetAgentCreator(address agentToken, address creator);
+    event SetAdmin(address admin);
+    event SetSpectraCompanyIndex(uint256 index);
+    event UpdateSystemAddress(uint8 index, address newAddress);
+    event Upgrade(address newImplementation, uint8 version);
+
+    modifier onlyAutonomousDeployer() {
+        require(
+            msg.sender == address(systemAddresses.autonomousDeployer),
+            &quot;ONLY_AUTONOMOUS_DEPLOYER&quot;
+        );
+        _;
+    }
+    modifier onlyAgenticCompany() {
+        require(
+            systemAddresses.agenticCompanyFactory.isCompany(msg.sender),
+            &quot;ONLY_AGENTIC_COMPANY_CAN_DISTRIBUTE&quot;
+        );
+        _;
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, &quot;ONLY_ADMIN&quot;);
+        _;
+    }
+
+    modifier onlyAdminOrOwner() {
+        require(msg.sender == admin || msg.sender == owner(), &quot;ONLY_ADMIN_OR_OWNER&quot;);
+        _;
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _autonomousDeployer,
+        address _agenticCompanyFactory,
+        address _ansResolver,
+        address _ansReverseRegistrar,
+        address _spectralTreasury,
+        uint256 _spectraCompanyIndex,
+        address _usdc_token,
+        address _spectral_token
+    ) public initializer {
+        __Ownable_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+        admin = msg.sender;
+        require(_autonomousDeployer != address(0), &quot;AUTONOMOUS_ZERO_ADDRESS&quot;);
+        require(_ansResolver != address(0), &quot;ANS_RESOLVER_ZERO_ADDRESS&quot;);
+        require(_ansReverseRegistrar != address(0), &quot;ANS_REVERSE_REGISTRY_ZERO_ADDRESS&quot;);
+        require(_spectralTreasury != address(0), &quot;SPECTRAL_TREASURY_ZERO_ADDRESS&quot;);
+        require(_usdc_token != address(0), &quot;USDC_ZERO_ADDRESS&quot;);
+        require(_spectral_token != address(0), &quot;SPEC_ZERO_ADDRESS&quot;);
+        // We don&#x27;t check the _agenticCompanyFactory since both contracts depend on each other and will deploy this contract first then set the factory address
+        systemAddresses.autonomousDeployer = IAutonomousAgentDeployer(_autonomousDeployer);
+        systemAddresses.agenticCompanyFactory = IAgenticCompanyFactory(_agenticCompanyFactory);
+        systemAddresses.ansResolver = IANSResolver(_ansResolver);
+        systemAddresses.ansReverseRegistrar = IANSReverseRegistrar(_ansReverseRegistrar);
+        systemAddresses.spectralTreasury = _spectralTreasury;
+        usdc_token = IERC20(_usdc_token);
+        spectral_token = IERC20Upgradeable(_spectral_token);
+        spectraCompanyIndex = _spectraCompanyIndex;
+        parameters[Parameter.TRADING_REWARDS_TREASURY_CUT] = 2000;
+        parameters[Parameter.TRADING_REWARDS_CREATOR_CUT] = 8000;
+        parameters[Parameter.TRADING_REWARDS_SPECTRA_CUT] = 2000;
+        parameters[Parameter.TRADING_REWARDS_EMPLOYEES_CUT] = 6000;
+        version = 1;
+    }
+
+    function setAgenticCompanyFactory(address _agenticCompanyFactory) external onlyOwner {
+        require(_agenticCompanyFactory != address(0), &quot;ZERO_ADDRESS&quot;);
+        systemAddresses.agenticCompanyFactory = IAgenticCompanyFactory(_agenticCompanyFactory);
+        emit UpdateSystemAddress(1, _agenticCompanyFactory);
+    }
+
+    function withdraw(address _token, uint256 _amount) external nonReentrant {
+        require(_amount &gt; 0, &quot;AMOUNT_ZERO&quot;);
+        require(_token != address(0), &quot;ZERO_ADDRESS&quot;);
+        UserBalances storage user = userBalances[msg.sender];
+        if (_token == address(spectral_token)) {
+            require(user.spectral &gt;= _amount, &quot;INSUFFICIENT_BALANCE&quot;);
+            user.spectral -= _amount;
+        } else if (_token == address(usdc_token)) {
+            require(user.usdc &gt;= _amount, &quot;INSUFFICIENT_BALANCE&quot;);
+            user.usdc -= _amount;
+        } else {
+            require(
+                user.agent_tokens_list[_token] &gt;= _amount,
+                &quot;INSUFFICIENT_BALANCE&quot;
+            );
+            user.agent_tokens_list[_token] -= _amount;
+            if (user.agent_tokens_list[_token] == 0) {
+                _removeAgentToken(user, _token);
+            }
+        }
+        IERC20Upgradeable(_token).safeTransfer(msg.sender, _amount);
+        emit Withdraw(msg.sender, _token, _amount);
+    }
+
+    function getUserAgentTokensCount(address user)
+        external
+        view
+        returns (uint256)
+    {
+        return userBalances[user].agent_tokens.length;
+    }
+
+    function setParameters(
+        Parameter[] calldata _parameters,
+        uint256[] calldata _values
+    ) external onlyOwner {
+        require(_parameters.length == _values.length, &quot;INVALID_LENGTH&quot;);
+        for (uint256 i = 0; i &lt; _parameters.length; i++) {
+            require(_values[i] &lt;= PRECISION, &quot;PARAMETER_OUT_OF_RANGE&quot;);
+            parameters[_parameters[i]] = _values[i];
+            emit SetParameter(_parameters[i], _values[i]);
+        }
+    }
+
+    function withdrawAllAgentTokens(uint256 start_index, uint256 end_index) external nonReentrant {
+        require(start_index &lt; end_index, &quot;INVALID_INDEX&quot;);
+        require(end_index &lt;= userBalances[msg.sender].agent_tokens.length, &quot;INVALID_INDEX&quot;);
+        for (uint256 i = start_index; i &lt; end_index; i++) {
+            address token = userBalances[msg.sender].agent_tokens[i];
+            uint256 amount = userBalances[msg.sender].agent_tokens_list[token];
+            require(amount &gt; 0, &quot;AMOUNT_ZERO&quot;);
+            userBalances[msg.sender].agent_tokens_list[token] = 0;
+            _removeAgentToken(userBalances[msg.sender], token);
+            IERC20Upgradeable(token).safeTransfer(msg.sender, amount);
+            emit Withdraw(msg.sender, token, amount);
+        }
+    }
+
+    function withdrawAllAgentTokensByAddresses(address[] calldata tokens) external nonReentrant {
+        for (uint256 i = 0; i &lt; tokens.length; i++) {
+            uint256 amount = userBalances[msg.sender].agent_tokens_list[tokens[i]];
+            require(amount &gt; 0, &quot;AMOUNT_ZERO&quot;);
+            userBalances[msg.sender].agent_tokens_list[tokens[i]] = 0;
+            _removeAgentToken(userBalances[msg.sender], tokens[i]);
+            IERC20Upgradeable(tokens[i]).safeTransfer(msg.sender, amount);
+            emit Withdraw(msg.sender, tokens[i], amount);
+        }
+    }
+
+    function transferTradingRewards(
+        address agentToken,
+        uint256 usdcAmount
+    ) external nonReentrant onlyAdmin() {
+        require(agentToken != address(0), &quot;ZERO_ADDRESS&quot;);
+        require(usdcAmount &gt; 0, &quot;AMOUNT_ZERO&quot;);
+        address[] memory beneficiaries;
+        uint256[] memory amounts;
+        usdc_token.safeTransferFrom(msg.sender, address(this), usdcAmount);
+        uint256 treasuryAmount = (usdcAmount * parameters[Parameter.TRADING_REWARDS_TREASURY_CUT]) / PRECISION;
+        usdc_token.safeTransfer(systemAddresses.spectralTreasury, treasuryAmount);
+        if(keccak256(abi.encodePacked(&quot;SPECTRA&quot;)) == keccak256(abi.encodePacked(IAgentToken(agentToken).symbol()))) {
+            uint256 spectraAmount = (usdcAmount * parameters[Parameter.TRADING_REWARDS_SPECTRA_CUT]) / PRECISION;
+            uint256 employeesAmount = (usdcAmount * parameters[Parameter.TRADING_REWARDS_EMPLOYEES_CUT]) / PRECISION;
+            address spectraWallet = IAgentBalances(systemAddresses.autonomousDeployer.agentBalances()).agentWallets(agentToken);
+            uint256 employeeCount = IAgenticCompany(systemAddresses.agenticCompanyFactory.getCompanyAddressAtIndex(spectraCompanyIndex)).employeeCount();
+            require(employeeCount &gt; 0, &quot;NO_EMPLOYEES&quot;);
+            beneficiaries = new address[](employeeCount);
+            amounts = new uint256[](employeeCount);
+            uint256 perEmployeeAmount = employeesAmount / employeeCount;
+            for (uint256 i = 0; i &lt; employeeCount; i++) {
+                address employee = 
+                systemAddresses.ansResolver.addr(IAgenticCompany(systemAddresses.agenticCompanyFactory.getCompanyAddressAtIndex(spectraCompanyIndex)).getEmployeeAtIndex(i));
+                userBalances[employee].usdc += perEmployeeAmount;
+                beneficiaries[i] = employee;
+                amounts[i] = perEmployeeAmount;
+            }
+            usdc_token.safeTransfer(spectraWallet, spectraAmount);
+            emit DistributeSpectraTradingRewards(agentToken, usdcAmount, beneficiaries, amounts);
+        } else {
+            uint256 creatorAmount = (usdcAmount * parameters[Parameter.TRADING_REWARDS_CREATOR_CUT]) / PRECISION;
+            require(agentCreators[agentToken] != address(0), &quot;CREATOR_NOT_SET&quot;);
+            usdc_token.safeTransfer(agentCreators[agentToken], creatorAmount);
+            emit DistributeGenericTradingRewards(agentToken, usdcAmount);
+        }
+    }
+    
+    
+    function _addOrGetAgentToken(UserBalances storage user, address token) internal returns (uint256) {
+        uint256 index = user.agent_tokens_indecies[token];
+        
+        if (index &gt;= user.agent_tokens.length || user.agent_tokens[index] != token) {
+            // Add to array
+            user.agent_tokens.push(token);
+            // Store and return new array index
+            index = user.agent_tokens.length - 1;
+            user.agent_tokens_indecies[token] = index;
+        }
+        
+        return index;
+    }
+
+    function _removeAgentToken(UserBalances storage user, address token) internal {
+        uint256 index = user.agent_tokens_indecies[token];
+        require(index &lt; user.agent_tokens.length, &quot;Token not found&quot;);
+        
+        // Get the last element
+        address lastToken = user.agent_tokens[user.agent_tokens.length - 1];
+
+        // Move last element to the position we&#x27;re deleting
+        user.agent_tokens[index] = lastToken;
+        // Update the index mapping for the moved token
+        user.agent_tokens_indecies[lastToken] = index;
+        
+        // Remove token&#x27;s index from mapping
+        delete user.agent_tokens_indecies[token];
+        
+        // Remove last element
+        user.agent_tokens.pop();
+    }
+
+    function transferHiringDistributions(
+        HiringDistribution[] calldata distributions,
+        address agentToken,
+        uint256 totalSpec,
+        uint256 totalAgentToken,
+        uint256 totalUsdc
+    ) external nonReentrant onlyAgenticCompany() {
+        require(
+            distributions.length &gt; 0,
+            &quot;DISTRIBUTIONS_MUST_BE_PROVIDED&quot;
+        );
+        require(agentToken != address(0), &quot;ZERO_ADDRESS&quot;);
+        usdc_token.safeTransferFrom(msg.sender, address(this), totalUsdc);
+        spectral_token.safeTransferFrom(msg.sender, address(this), totalSpec);
+        IERC20Upgradeable(agentToken).safeTransferFrom(msg.sender, address(this), totalAgentToken);
+        uint256 accSpecAmount = 0;
+        uint256 accAgentTokenAmount = 0;
+        uint256 accUsdcAmount = 0;
+        for (uint256 i = 0; i &lt; distributions.length; i++) {
+            UserBalances storage user = userBalances[
+                systemAddresses.ansResolver.addr(distributions[i].recipientAnsNode)
+            ];
+            user.spectral += distributions[i].specAmount;
+            accSpecAmount += distributions[i].specAmount;
+            _addOrGetAgentToken(user, agentToken);
+            user.agent_tokens_list[agentToken] += distributions[i].agentTokenAmount;
+            accAgentTokenAmount += distributions[i].agentTokenAmount;
+            user.usdc += distributions[i].usdcAmount;
+            accUsdcAmount += distributions[i].usdcAmount;
+        }
+        require(accSpecAmount == totalSpec, &quot;INCORRECT_SPEC_AMOUNT&quot;);
+        require(accAgentTokenAmount == totalAgentToken, &quot;INCORRECT_AGENT_TOKEN_AMOUNT&quot;);
+        require(accUsdcAmount == totalUsdc, &quot;INCORRECT_USDC_AMOUNT&quot;);
+        emit DistributeHiringBonuses(
+            msg.sender,
+            distributions.length,
+            agentToken,
+            totalSpec,
+            totalAgentToken,
+            totalUsdc,
+            distributions
+        );
+    }
+
+    function setAgentCreator(address agentToken, address creator)
+        external
+        onlyAutonomousDeployer
+    {
+        require(agentToken != address(0), &quot;ZERO_ADDRESS&quot;);
+        require(creator != address(0), &quot;ZERO_ADDRESS&quot;);
+        agentCreators[agentToken] = creator;
+        emit SetAgentCreator(agentToken, creator);
+    }
+
+    function setAgentCreatorsBatch(
+        address[] calldata agentTokens,
+        address[] calldata creators
+    ) external onlyOwner {
+        require(agentTokens.length == creators.length, &quot;INVALID_LENGTH&quot;);
+        for (uint256 i = 0; i &lt; agentTokens.length; i++) {
+            require(agentTokens[i] != address(0), &quot;ZERO_ADDRESS&quot;);
+            require(creators[i] != address(0), &quot;ZERO_ADDRESS&quot;);
+            agentCreators[agentTokens[i]] = creators[i];
+            emit SetAgentCreator(agentTokens[i], creators[i]);
+        }
+    }
+
+    function setAdmin(address _admin) external onlyOwner {
+        require(_admin != address(0), &quot;ZERO_ADDRESS&quot;);
+        admin = _admin;
+        emit SetAdmin(_admin);
+    }
+
+    function updateSystemAddress(
+    uint8 index,
+    address newAddress
+    ) external onlyOwner {
+        require(index &lt; 5, &quot;INVALID_INDEX&quot;);
+        require(newAddress != address(0), &quot;ZERO_ADDRESS&quot;);
+        
+        assembly {
+            // Store new address at the correct slot
+            sstore(add(systemAddresses.slot, index), newAddress)
+        }
+        emit UpdateSystemAddress(index, newAddress);
+    }
+
+    function setSpectraCompanyIndex(uint256 index) external onlyOwner {
+        require(index &lt; systemAddresses.agenticCompanyFactory.companyCount(), &quot;INVALID_INDEX&quot;);
+        spectraCompanyIndex = index;
+        emit SetSpectraCompanyIndex(index);
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {
+        require(newImplementation != address(0), &quot;ZERO_ADDRESS&quot;);
+        ++version;
+        emit Upgrade(newImplementation, version);
+    }
+}
+</code></pre></section>
+<footer><p>Ground-truth findings for this eval are intentionally not published.</p></footer>
+</body>
+</html>

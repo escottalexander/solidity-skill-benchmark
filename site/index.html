@@ -106,6 +106,8 @@
             font-size: 0.85rem;
         }
         .detail-item .eval-name { font-weight: 600; }
+        .detail-item .eval-name a { color: var(--accent); text-decoration: none; }
+        .detail-item .eval-name a:hover { text-decoration: underline; }
         .detail-item .eval-score { color: var(--text-muted); }
 
         .empty-state {
@@ -219,6 +221,9 @@
             : `<strong>${e.skill}</strong>` },
       { key:'model', label:'Model', dir:'asc', title:"Model that ran the audit: Claude Sonnet 4.6, Sonnet 5, or Opus 4.8.",
         get:e=>modelName(e), cell:e=>`<span class="metric">${modelName(e)}</span>` },
+      { key:'runs', label:'Runs', dir:'desc', title:"Audit runs behind this row: repetitions per contract set × number of contract sets (each eval is one set of contracts; every repetition is a fresh independent audit). Scores are averaged over the repetitions.",
+        get:e=>e.per_eval.reduce((s,pe)=>s+(pe.reps||1),0),
+        cell:e=>`<span class="metric">${e.reps} × ${e.evals_run}</span>` },
       { key:'recall', label:'Bug Catch Rate', dir:'desc', title:"Of the known bugs in the code, the share this skill actually caught: found / total, pooled across all 167 findings. Higher is better. (Technical name: recall.)",
         get:e=>e.recall.mean, cell:e=>renderBar(e.recall.mean) },
       { key:'precision', label:'Precision', dir:'desc', title:"Of the skill's substantive (High/Med/Critical) flags, the share that matched a known vulnerability: found / (found + false positives). Higher is better.",
@@ -316,11 +321,14 @@
             body += `<tr class="detail-panel" id="detail-${id}"><td colspan="${COLUMNS.length}"><div class="detail-content">
                 <p style="margin-bottom:0.5rem;color:var(--text-muted)">
                     Recall ${pct(e.recall.mean)} | Precision ${pct(e.precision.mean)} | F1 ${pct(e.f1.mean)}
-                    | FP ${e.false_positives ?? '-'} | Tok/find ${tokFmt(e.tokens_per_finding)} | ${e.evals_run} evals</p>
+                    | FP ${e.false_positives ?? '-'} | Tok/find ${tokFmt(e.tokens_per_finding)}
+                    | ${e.per_eval.reduce((s,pe)=>s+(pe.reps||1),0)} runs over ${e.evals_run} contract sets
+                    &middot; click a set to view its contracts</p>
                 <div class="detail-grid">`;
             for (const pe of (e.per_eval || [])) {
-                body += `<div class="detail-item"><div class="eval-name">${pe.eval_id}</div>
-                    <div class="eval-score">${pe.found}/${pe.total} found |
+                const runs = pe.reps > 1 ? `avg of ${pe.reps} runs` : '1 run';
+                body += `<div class="detail-item"><div class="eval-name"><a href="contracts/${pe.eval_id}.html" target="_blank" rel="noopener" title="View the ${pe.eval_id} contract sources">${pe.eval_id}</a></div>
+                    <div class="eval-score">${pe.found}/${pe.total} found (${runs}) |
                         F1 <span class="${colorClass(pe.f1)}">${pct(pe.f1)}</span> | FP ${pe.false_positives}</div></div>`;
             }
             body += `</div></div></td></tr>`;

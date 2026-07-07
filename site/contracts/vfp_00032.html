@@ -1,0 +1,3135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vfp_00032 — audited contracts</title>
+<style>
+  :root { --bg:#fff; --text:#1a1a2e; --muted:#667; --surface:#f6f7f9; --border:#dde; --accent:#4a6cf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1117; --text:#e6e6ef; --muted:#99a; --surface:#181b24; --border:#2a2e3d; --accent:#7a95ff; }
+  }
+  body { margin:0 auto; max-width:1100px; padding:2rem 1.5rem; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+  h1 { font-size:1.4rem; margin:0 0 0.25rem; }
+  h2 { font-size:1rem; margin:2rem 0 0.5rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .meta, footer { color:var(--muted); font-size:0.9rem; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  nav { margin:1rem 0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85rem; }
+  nav a { margin-right:1rem; }
+  pre { background:var(--surface); border:1px solid var(--border); border-radius:8px;
+        padding:1rem; overflow-x:auto; font-size:0.8rem; line-height:1.45; }
+</style>
+</head>
+<body>
+<p><a href="../index.html">&larr; leaderboard</a></p>
+<h1>vfp_00032</h1>
+<p class="meta">2025.07.18 - Final - Notional Exponent Audit Report.pdf &middot; 13 contract files &middot; the exact sources given to every
+auditor run of this eval in the Solidity Skill Benchmark.</p>
+<nav><a href="#AbstractLendingRouter.sol">AbstractLendingRouter.sol</a><a href="#AbstractRewardManager.sol">AbstractRewardManager.sol</a><a href="#AbstractSingleSidedLP.sol">AbstractSingleSidedLP.sol</a><a href="#AbstractStakingStrategy.sol">AbstractStakingStrategy.sol</a><a href="#AbstractWithdrawRequestManager.sol">AbstractWithdrawRequestManager.sol</a><a href="#AbstractYieldStrategy.sol">AbstractYieldStrategy.sol</a><a href="#Constants.sol">Constants.sol</a><a href="#CurveConvex2Token.sol">CurveConvex2Token.sol</a><a href="#GenericERC4626.sol">GenericERC4626.sol</a><a href="#IRewardManager.sol">IRewardManager.sol</a><a href="#MorphoLendingRouter.sol">MorphoLendingRouter.sol</a><a href="#RewardManagerMixin.sol">RewardManagerMixin.sol</a><a href="#UniV3Adapter.sol">UniV3Adapter.sol</a></nav>
+<section id="AbstractLendingRouter.sol"><h2>AbstractLendingRouter.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {ILendingRouter, VaultPosition} from &quot;../interfaces/ILendingRouter.sol&quot;;
+import {
+    NotAuthorized,
+    CannotExitPositionWithinCooldownPeriod,
+    CannotInitiateWithdraw,
+    CannotForceWithdraw,
+    InvalidLendingRouter,
+    NoExistingPosition,
+    LiquidatorHasPosition,
+    CannotEnterPosition,
+    CannotLiquidateZeroShares,
+    InsufficientSharesHeld
+} from &quot;../interfaces/Errors.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {TokenUtils} from &quot;../utils/TokenUtils.sol&quot;;
+import {SafeERC20} from &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import {IYieldStrategy} from &quot;../interfaces/IYieldStrategy.sol&quot;;
+import {RewardManagerMixin} from &quot;../rewards/RewardManagerMixin.sol&quot;;
+import {ILendingRouter} from &quot;../interfaces/ILendingRouter.sol&quot;;
+import {ADDRESS_REGISTRY, COOLDOWN_PERIOD} from &quot;../utils/Constants.sol&quot;;
+
+abstract contract AbstractLendingRouter is ILendingRouter {
+    using SafeERC20 for ERC20;
+    using TokenUtils for ERC20;
+
+    mapping(address user =&gt; mapping(address operator =&gt; bool approved)) private s_isApproved;
+
+    /*** Authorization Methods ***/
+    modifier isAuthorized(address onBehalf, address vault) {
+        // In this case msg.sender is the operator
+        if (msg.sender != onBehalf &amp;&amp; !isApproved(onBehalf, msg.sender)) {
+            revert NotAuthorized(msg.sender, onBehalf);
+        }
+
+        _;
+
+        // Clear the current account after the transaction is finished
+        IYieldStrategy(vault).clearCurrentAccount();
+    }
+
+    /// @inheritdoc ILendingRouter
+    function setApproval(address operator, bool approved) external override {
+        if (operator == msg.sender) revert NotAuthorized(msg.sender, operator);
+        s_isApproved[msg.sender][operator] = approved;
+    }
+
+    /// @inheritdoc ILendingRouter
+    function isApproved(address user, address operator) public view override returns (bool) {
+        return s_isApproved[user][operator];
+    }
+
+    /// @inheritdoc ILendingRouter
+    function enterPosition(
+        address onBehalf,
+        address vault,
+        uint256 depositAssetAmount,
+        uint256 borrowAmount,
+        bytes calldata depositData
+    ) public override isAuthorized(onBehalf, vault) {
+        _enterPosition(onBehalf, vault, depositAssetAmount, borrowAmount, depositData, address(0));
+    }
+
+    /// @inheritdoc ILendingRouter
+    function migratePosition(
+        address onBehalf,
+        address vault,
+        address migrateFrom
+    ) public override isAuthorized(onBehalf, vault) {
+        if (!ADDRESS_REGISTRY.isLendingRouter(migrateFrom)) revert InvalidLendingRouter();
+        // Borrow amount is set to the amount of debt owed to the previous lending router
+        (uint256 borrowAmount, /* */, /* */) = ILendingRouter(migrateFrom).healthFactor(onBehalf, vault);
+
+        _enterPosition(onBehalf, vault, 0, borrowAmount, bytes(&quot;&quot;), migrateFrom);
+    }
+
+    function _enterPosition(
+        address onBehalf,
+        address vault,
+        uint256 depositAssetAmount,
+        uint256 borrowAmount,
+        bytes memory depositData,
+        address migrateFrom
+    ) internal {
+        address asset = IYieldStrategy(vault).asset();
+        // Cannot enter a position if the account already has a native share balance
+        if (IYieldStrategy(vault).balanceOf(onBehalf) &gt; 0) revert CannotEnterPosition();
+
+        if (depositAssetAmount &gt; 0) {
+            // Take any margin deposit from the sender initially
+            ERC20(asset).safeTransferFrom(msg.sender, address(this), depositAssetAmount);
+        }
+
+        if (borrowAmount &gt; 0) {
+            _flashBorrowAndEnter(
+                onBehalf, vault, asset, depositAssetAmount, borrowAmount, depositData, migrateFrom
+            );
+        } else {
+            _enterOrMigrate(onBehalf, vault, asset, depositAssetAmount, depositData, migrateFrom);
+        }
+
+        ADDRESS_REGISTRY.setPosition(onBehalf, vault);
+    }
+
+    /// @inheritdoc ILendingRouter
+    function exitPosition(
+        address onBehalf,
+        address vault,
+        address receiver,
+        uint256 sharesToRedeem,
+        uint256 assetToRepay,
+        bytes calldata redeemData
+    ) external override isAuthorized(onBehalf, vault) {
+        _checkExit(onBehalf, vault);
+
+        address asset = IYieldStrategy(vault).asset();
+        if (0 &lt; assetToRepay) {
+            _exitWithRepay(onBehalf, vault, asset, receiver, sharesToRedeem, assetToRepay, redeemData);
+        } else {
+            address migrateTo = _isMigrate(receiver) ? receiver : address(0);
+            uint256 assetsWithdrawn = _redeemShares(onBehalf, vault, asset, migrateTo, sharesToRedeem, redeemData);
+            if (0 &lt; assetsWithdrawn) ERC20(asset).safeTransfer(receiver, assetsWithdrawn);
+        }
+
+        if (balanceOfCollateral(onBehalf, vault) == 0) {
+            ADDRESS_REGISTRY.clearPosition(onBehalf, vault);
+        }
+    }
+
+    /// @inheritdoc ILendingRouter
+    function liquidate(
+        address liquidateAccount,
+        address vault,
+        uint256 sharesToLiquidate,
+        uint256 debtToRepay
+    ) external override returns (uint256 sharesToLiquidator) {
+        if (sharesToLiquidate == 0) revert CannotLiquidateZeroShares();
+
+        address liquidator = msg.sender;
+        VaultPosition memory position = ADDRESS_REGISTRY.getVaultPosition(liquidator, vault);
+        // If the liquidator has a position then they cannot liquidate or they will have
+        // a native balance and a balance on the lending market.
+        if (position.lendingRouter != address(0)) revert LiquidatorHasPosition();
+
+        uint256 balanceBefore = balanceOfCollateral(liquidateAccount, vault);
+        if (balanceBefore == 0) revert InsufficientSharesHeld();
+
+        // Runs any checks on the vault to ensure that the liquidation can proceed, whitelists the lending platform
+        // to transfer collateral to the lending router. The current account is set in this method.
+        IYieldStrategy(vault).preLiquidation(liquidator, liquidateAccount, sharesToLiquidate, balanceBefore);
+
+        // After this call, address(this) will have the liquidated shares
+        sharesToLiquidator = _liquidate(liquidator, vault, liquidateAccount, sharesToLiquidate, debtToRepay);
+
+        // Transfers the shares to the liquidator from the lending router and does any post liquidation logic. The
+        // current account is cleared in this method.
+        IYieldStrategy(vault).postLiquidation(liquidator, liquidateAccount, sharesToLiquidator);
+
+        // The liquidator will receive shares in their native balance and then they can call redeem
+        // on the yield strategy to get the assets.
+
+        // Clear the position if the liquidator has taken all the shares, in the case of an insolvency,
+        // the account&#x27;s position will just be left on the lending market with zero collateral. The account
+        // would be able to create a new position on this lending router or a new position on a different
+        // lending router. If they do create a new position on an insolvent account their old debt may
+        // be applied to their new position.
+        if (sharesToLiquidator == balanceBefore) ADDRESS_REGISTRY.clearPosition(liquidateAccount, vault);
+    }
+
+    /// @inheritdoc ILendingRouter
+    function initiateWithdraw(
+        address onBehalf,
+        address vault,
+        bytes calldata data
+    ) external override isAuthorized(onBehalf, vault) returns (uint256 requestId) {
+        requestId = _initiateWithdraw(vault, onBehalf, data);
+    }
+
+    /// @inheritdoc ILendingRouter
+    function forceWithdraw(address account, address vault, bytes calldata data) external returns (uint256 requestId) {
+        // Can only force a withdraw if health factor is negative, this allows a liquidator to
+        // force a withdraw and liquidate a position at a later time.
+        (uint256 borrowed, /* */, uint256 maxBorrow) = healthFactor(account, vault);
+        if (borrowed &lt;= maxBorrow) revert CannotForceWithdraw(account);
+
+        requestId = _initiateWithdraw(vault, account, data);
+
+        // Clear the current account since this method is not called using isAuthorized
+        IYieldStrategy(vault).clearCurrentAccount();
+    }
+
+    /// @inheritdoc ILendingRouter
+    function claimRewards(address vault) external returns (uint256[] memory rewards) {
+        return RewardManagerMixin(vault).claimAccountRewards(msg.sender, balanceOfCollateral(msg.sender, vault));
+    }
+
+    /// @inheritdoc ILendingRouter
+    function healthFactor(address borrower, address vault) public override virtual returns (uint256 borrowed, uint256 collateralValue, uint256 maxBorrow);
+
+    /// @inheritdoc ILendingRouter
+    function balanceOfCollateral(address account, address vault) public override view virtual returns (uint256 collateralBalance);
+
+
+    /*** Internal Methods ***/
+
+    function _checkExit(address onBehalf, address vault) internal view  {
+        VaultPosition memory position = ADDRESS_REGISTRY.getVaultPosition(onBehalf, vault);
+        if (position.lendingRouter != address(this)) revert NoExistingPosition();
+        if (block.timestamp - position.lastEntryTime &lt; COOLDOWN_PERIOD) {
+            revert CannotExitPositionWithinCooldownPeriod();
+        }
+    }
+
+    /// @dev Checks if an exitPosition call is a migration, this would be called via a lending router
+    function _isMigrate(address receiver) internal view returns (bool) {
+        return receiver == msg.sender &amp;&amp; ADDRESS_REGISTRY.isLendingRouter(msg.sender);
+    }
+
+    /// @dev Enters a position or migrates shares from a previous lending router
+    function _enterOrMigrate(
+        address onBehalf,
+        address vault,
+        address asset,
+        uint256 assetAmount,
+        bytes memory depositData,
+        address migrateFrom
+    ) internal returns (uint256 sharesReceived) {
+        if (migrateFrom != address(0)) {
+            // Allow the previous lending router to repay the debt from assets held here.
+            ERC20(asset).checkApprove(migrateFrom, assetAmount);
+            sharesReceived = ILendingRouter(migrateFrom).balanceOfCollateral(onBehalf, vault);
+
+            // Must migrate the entire position
+            ILendingRouter(migrateFrom).exitPosition(
+                onBehalf, vault, address(this), sharesReceived, type(uint256).max, bytes(&quot;&quot;)
+            );
+        } else {
+            ERC20(asset).approve(vault, assetAmount);
+            sharesReceived = IYieldStrategy(vault).mintShares(assetAmount, onBehalf, depositData);
+        }
+
+        _supplyCollateral(onBehalf, vault, asset, sharesReceived);
+    }
+
+    /// @dev Redeems or withdraws shares from the lending market, handles migration
+    function _redeemShares(
+        address sharesOwner,
+        address vault,
+        address asset,
+        address migrateTo,
+        uint256 sharesToRedeem,
+        bytes memory redeemData
+    ) internal returns (uint256 assetsWithdrawn) {
+        address receiver = migrateTo == address(0) ? sharesOwner : migrateTo;
+        uint256 sharesHeld = balanceOfCollateral(sharesOwner, vault);
+
+        // Allows the transfer from the lending market to the sharesOwner
+        IYieldStrategy(vault).allowTransfer(receiver, sharesToRedeem, sharesOwner);
+        _withdrawCollateral(vault, asset, sharesToRedeem, sharesOwner, receiver);
+
+        // If we are not migrating then burn the shares
+        if (migrateTo == address(0)) {
+            assetsWithdrawn = IYieldStrategy(vault).burnShares(
+                sharesOwner, sharesToRedeem, sharesHeld, redeemData
+            );
+        }
+    }
+
+    /// @dev Initiates a withdraw request for the vault shares held by the account
+    function _initiateWithdraw(
+        address vault,
+        address account,
+        bytes calldata data
+    ) internal returns (uint256 requestId) {
+        uint256 sharesHeld = balanceOfCollateral(account, vault);
+        if (sharesHeld == 0) revert InsufficientSharesHeld();
+        return IYieldStrategy(vault).initiateWithdraw(account, sharesHeld, data);
+    }
+
+    /*** Virtual Methods (lending market specific) ***/
+
+    /// @dev Flash borrows the assets and enters a position
+    function _flashBorrowAndEnter(
+        address onBehalf,
+        address vault,
+        address asset,
+        uint256 depositAssetAmount,
+        uint256 borrowAmount,
+        bytes memory depositData,
+        address migrateFrom
+    ) internal virtual;
+
+    /// @dev Supplies collateral in the amount of shares received to the lending market
+    function _supplyCollateral(
+        address onBehalf, address vault, address asset, uint256 sharesReceived
+    ) internal virtual;
+
+    /// @dev Withdraws collateral from the lending market
+    function _withdrawCollateral(
+        address vault,
+        address asset,
+        uint256 sharesToRedeem,
+        address sharesOwner,
+        address receiver
+    ) internal virtual;
+
+    /// @dev Liquidates a position on the lending market
+    function _liquidate(
+        address liquidator,
+        address vault,
+        address liquidateAccount,
+        uint256 sharesToLiquidate,
+        uint256 debtToRepay
+    ) internal virtual returns (uint256 sharesToLiquidator);
+
+    /// @dev Exits a position with a debt repayment
+    function _exitWithRepay(
+        address onBehalf,
+        address vault,
+        address asset,
+        address receiver,
+        uint256 sharesToRedeem,
+        uint256 assetToRepay,
+        bytes calldata redeemData
+    ) internal virtual;
+
+}</code></pre></section>
+<section id="AbstractRewardManager.sol"><h2>AbstractRewardManager.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {ReentrancyGuardTransient} from &quot;@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import &quot;../interfaces/IRewardManager.sol&quot;;
+import {IYieldStrategy} from &quot;../interfaces/IYieldStrategy.sol&quot;;
+import {Unauthorized} from &quot;../interfaces/Errors.sol&quot;;
+import {DEFAULT_PRECISION, ADDRESS_REGISTRY, YEAR} from &quot;../utils/Constants.sol&quot;;
+import {TypeConvert} from &quot;../utils/TypeConvert.sol&quot;;
+import {IEIP20NonStandard} from &quot;../interfaces/IEIP20NonStandard.sol&quot;;
+import {TokenUtils} from &quot;../utils/TokenUtils.sol&quot;;
+
+abstract contract AbstractRewardManager is IRewardManager, ReentrancyGuardTransient {
+    using TypeConvert for uint256;
+    using TokenUtils for ERC20;
+
+    modifier onlyUpgradeAdmin() {
+        if (msg.sender != ADDRESS_REGISTRY.upgradeAdmin()) revert Unauthorized(msg.sender);
+        _;
+    }
+
+    // Uses custom storage slots to avoid collisions with other contracts
+    uint256 private constant REWARD_POOL_SLOT = 1000001;
+    uint256 private constant VAULT_REWARD_STATE_SLOT = 1000002;
+    uint256 private constant ACCOUNT_REWARD_DEBT_SLOT = 1000003;
+    uint256 private constant ACCOUNT_ESCROW_STATE_SLOT = 1000004;
+
+    function _getRewardPoolSlot() internal pure returns (RewardPoolStorage storage store) {
+        assembly { store.slot := REWARD_POOL_SLOT }
+    }
+
+    function _getVaultRewardStateSlot() internal pure returns (VaultRewardState[] storage store) {
+        assembly { store.slot := VAULT_REWARD_STATE_SLOT }
+    }
+
+    function _getAccountRewardDebtSlot() internal pure returns (
+        mapping(address account =&gt; mapping(address rewardToken =&gt; uint256 rewardDebt)) storage store
+    ) {
+        assembly { store.slot := ACCOUNT_REWARD_DEBT_SLOT }
+    }
+
+    /// @inheritdoc IRewardManager
+    function migrateRewardPool(address poolToken, RewardPoolStorage memory newRewardPool) external override onlyUpgradeAdmin nonReentrant {
+        // Claim all rewards from the previous reward pool before withdrawing
+        uint256 effectiveSupplyBefore = IYieldStrategy(address(this)).effectiveSupply();
+        _claimVaultRewards(effectiveSupplyBefore, _getVaultRewardStateSlot());
+        RewardPoolStorage memory oldRewardPool = _getRewardPoolSlot();
+
+        if (oldRewardPool.rewardPool != address(0)) {
+            _withdrawFromPreviousRewardPool(oldRewardPool);
+
+            // Clear approvals on the old pool.
+            ERC20(poolToken).checkRevoke(address(oldRewardPool.rewardPool));
+        }
+
+        uint256 poolTokens = ERC20(poolToken).balanceOf(address(this));
+        _depositIntoNewRewardPool(poolToken, poolTokens, newRewardPool);
+
+        // Set the last claim timestamp to the current block timestamp since we re claiming all the rewards
+        // earlier in this method.
+        _getRewardPoolSlot().lastClaimTimestamp = uint32(block.timestamp);
+        _getRewardPoolSlot().rewardPool = newRewardPool.rewardPool;
+        _getRewardPoolSlot().forceClaimAfter = newRewardPool.forceClaimAfter;
+    }
+
+
+    /// @inheritdoc IRewardManager
+    function getRewardSettings() external view override returns (
+        VaultRewardState[] memory rewardStates,
+        RewardPoolStorage memory rewardPool
+    ) {
+        rewardStates = _getVaultRewardStateSlot();
+        rewardPool = _getRewardPoolSlot();
+    }
+
+    /// @inheritdoc IRewardManager
+    function getRewardDebt(address rewardToken, address account) external view override returns (uint256) {
+        return _getAccountRewardDebtSlot()[rewardToken][account];
+    }
+
+    /// @inheritdoc IRewardManager
+    function updateRewardToken(
+        uint256 index,
+        address rewardToken,
+        uint128 emissionRatePerYear,
+        uint32 endTime
+    ) external override onlyUpgradeAdmin {
+        uint256 effectiveSupplyBefore = IYieldStrategy(address(this)).effectiveSupply();
+        uint256 numRewardStates = _getVaultRewardStateSlot().length;
+
+        if (index &lt; numRewardStates) {
+            VaultRewardState memory state = _getVaultRewardStateSlot()[index];
+            // Safety check to ensure that the correct token is specified, we can never change the
+            // token address once set.
+            require(state.rewardToken == rewardToken);
+            // Modifies the emission rate on an existing token, direct claims of the token will
+            // not be affected by the emission rate.
+            // First accumulate under the old regime up to the current time. Even if the previous
+            // emissionRatePerYear is zero this will still set the lastAccumulatedTime to the current
+            // blockTime.
+            _accumulateSecondaryRewardViaEmissionRate(index, state, effectiveSupplyBefore);
+
+            // Save the new emission rates
+            state.emissionRatePerYear = emissionRatePerYear;
+            if (state.emissionRatePerYear == 0) {
+                state.endTime = 0;
+            } else {
+                require(block.timestamp &lt; endTime);
+                state.endTime = endTime;
+            }
+            _getVaultRewardStateSlot()[index] = state;
+        } else if (index == numRewardStates) {
+            // This sets a new reward token, ensure that the current slot is empty
+            VaultRewardState[] storage states = _getVaultRewardStateSlot();
+            // If no emission rate is set then governance is just adding a token that can be claimed
+            // via the LP tokens without an emission rate. These settings will be left empty and the
+            // subsequent _claimVaultRewards method will set the initial accumulatedRewardPerVaultShare.
+            if (0 &lt; emissionRatePerYear) require(block.timestamp &lt; endTime);
+
+            states.push(VaultRewardState({
+                rewardToken: rewardToken,
+                lastAccumulatedTime: uint32(block.timestamp),
+                endTime: endTime,
+                emissionRatePerYear: emissionRatePerYear,
+                accumulatedRewardPerVaultShare: 0
+            }));
+        } else {
+            // Can only append or modify existing tokens
+            revert();
+        }
+
+        // Claim all vault rewards up to the current time
+        _claimVaultRewards(effectiveSupplyBefore, _getVaultRewardStateSlot());
+        emit VaultRewardUpdate(rewardToken, emissionRatePerYear, endTime);
+    }
+
+    /// @notice Claims all the rewards for the entire vault and updates the accumulators. Does not
+    /// update emission rewarders since those are automatically updated on every account claim.
+    function claimRewardTokens() external nonReentrant {
+        // This method is not executed from inside enter or exit vault positions, so this total
+        // vault shares value is valid.
+        uint256 effectiveSupplyBefore = IYieldStrategy(address(this)).effectiveSupply();
+        _claimVaultRewards(effectiveSupplyBefore, _getVaultRewardStateSlot());
+    }
+
+    /// @inheritdoc IRewardManager
+    function updateAccountRewards(
+        address account,
+        uint256 effectiveSupplyBefore,
+        uint256 accountSharesBefore,
+        uint256 accountSharesAfter,
+        bool sharesInEscrow
+    ) external returns (uint256[] memory rewards) {
+        // Short circuit in this case, no rewards to claim
+        if (sharesInEscrow &amp;&amp; accountSharesAfter &gt; 0) return rewards;
+
+        VaultRewardState[] memory state = _getVaultRewardStateSlot();
+        _claimVaultRewards(effectiveSupplyBefore, state);
+        rewards = new uint256[](state.length);
+
+        for (uint256 i; i &lt; state.length; i++) {
+            if (sharesInEscrow &amp;&amp; accountSharesAfter == 0) {
+                delete _getAccountRewardDebtSlot()[state[i].rewardToken][account];
+                continue;
+            }
+
+            if (0 &lt; state[i].emissionRatePerYear) {
+                // Accumulate any rewards with an emission rate here
+                _accumulateSecondaryRewardViaEmissionRate(i, state[i], effectiveSupplyBefore);
+            }
+
+            rewards[i] = _claimRewardToken(
+                state[i].rewardToken,
+                account,
+                accountSharesBefore,
+                accountSharesAfter,
+                state[i].accumulatedRewardPerVaultShare
+            );
+        }
+    }
+
+    /// @notice Executes a claim against the given reward pool type and updates internal
+    /// rewarder accumulators.
+    function _claimVaultRewards(
+        uint256 effectiveSupplyBefore,
+        VaultRewardState[] memory state
+    ) internal {
+        RewardPoolStorage memory rewardPool = _getRewardPoolSlot();
+        if (rewardPool.rewardPool == address(0)) return;
+        if (block.timestamp &lt; rewardPool.lastClaimTimestamp + rewardPool.forceClaimAfter) return;
+
+        uint256[] memory balancesBefore = new uint256[](state.length);
+        // Run a generic call against the reward pool and then do a balance
+        // before and after check.
+        for (uint256 i; i &lt; state.length; i++) {
+            // Presumes that ETH will never be given out as a reward token.
+            balancesBefore[i] = ERC20(state[i].rewardToken).balanceOf(address(this));
+        }
+
+        _executeClaim();
+
+        _getRewardPoolSlot().lastClaimTimestamp = uint32(block.timestamp);
+
+        // This only accumulates rewards claimed, it does not accumulate any secondary emissions
+        // that are streamed to vault users.
+        for (uint256 i; i &lt; state.length; i++) {
+            uint256 balanceAfter = ERC20(state[i].rewardToken).balanceOf(address(this));
+            _accumulateSecondaryRewardViaClaim(
+                i,
+                state[i],
+                // balanceAfter should never be less than balanceBefore
+                balanceAfter - balancesBefore[i],
+                effectiveSupplyBefore
+            );
+        }
+    }
+
+
+    /** Reward Claim Methods **/
+
+    function _claimRewardToken(
+        address rewardToken,
+        address account,
+        uint256 accountSharesBefore,
+        uint256 accountSharesAfter,
+        uint256 rewardsPerVaultShare
+    ) internal returns (uint256 rewardToClaim) {
+        // Vault shares are always in DEFAULT_PRECISION
+        uint256 rewardDebt = _getAccountRewardDebtSlot()[rewardToken][account];
+        rewardToClaim = ((accountSharesBefore * rewardsPerVaultShare) / DEFAULT_PRECISION) - rewardDebt;
+        _getAccountRewardDebtSlot()[rewardToken][account] = (
+            (accountSharesAfter * rewardsPerVaultShare) / DEFAULT_PRECISION
+        );
+
+        if (0 &lt; rewardToClaim) {
+            // Ignore transfer errors here so that any strange failures here do not
+            // prevent normal vault operations from working. Failures may include a
+            // lack of balances or some sort of blacklist that prevents an account
+            // from receiving tokens.
+            if (rewardToken.code.length &gt; 0) {
+                try IEIP20NonStandard(rewardToken).transfer(account, rewardToClaim) {
+                    bool success = TokenUtils.checkReturnCode();
+                    if (success) {
+                        emit VaultRewardTransfer(rewardToken, account, rewardToClaim);
+                    } else {
+                        emit VaultRewardTransfer(rewardToken, account, 0);
+                    }
+                // Emits zero tokens transferred if the transfer fails.
+                } catch {
+                    emit VaultRewardTransfer(rewardToken, account, 0);
+                }
+            }
+        }
+    }
+
+    /*** ACCUMULATORS  ***/
+
+    function _accumulateSecondaryRewardViaClaim(
+        uint256 index,
+        VaultRewardState memory state,
+        uint256 tokensClaimed,
+        uint256 effectiveSupplyBefore
+    ) private {
+        if (tokensClaimed == 0) return;
+
+        state.accumulatedRewardPerVaultShare += (
+            (tokensClaimed * DEFAULT_PRECISION) / effectiveSupplyBefore
+        ).toUint128();
+
+        _getVaultRewardStateSlot()[index] = state;
+    }
+
+    function _accumulateSecondaryRewardViaEmissionRate(
+        uint256 index,
+        VaultRewardState memory state,
+        uint256 effectiveSupplyBefore
+    ) private {
+        state.accumulatedRewardPerVaultShare = _getAccumulatedRewardViaEmissionRate(
+            state, effectiveSupplyBefore, block.timestamp
+        ).toUint128();
+        state.lastAccumulatedTime = uint32(block.timestamp);
+
+        _getVaultRewardStateSlot()[index] = state;
+    }
+
+    function _getAccumulatedRewardViaEmissionRate(
+        VaultRewardState memory state,
+        uint256 effectiveSupplyBefore,
+        uint256 blockTime
+    ) private pure returns (uint256) {
+        // Short circuit the method with no emission rate
+        if (state.emissionRatePerYear == 0) return state.accumulatedRewardPerVaultShare;
+        require(0 &lt; state.endTime);
+        uint256 time = blockTime &lt; state.endTime ? blockTime : state.endTime;
+
+        uint256 additionalIncentiveAccumulatedPerVaultShare;
+        if (state.lastAccumulatedTime &lt; time &amp;&amp; 0 &lt; effectiveSupplyBefore) {
+            // NOTE: no underflow, checked in if statement
+            uint256 timeSinceLastAccumulation = time - state.lastAccumulatedTime;
+            // Precision here is:
+            //  timeSinceLastAccumulation (SECONDS)
+            //  emissionRatePerYear (REWARD_TOKEN_PRECISION)
+            //  DEFAULT_PRECISION (1e18)
+            // DIVIDE BY
+            //  YEAR (SECONDS)
+            //  DEFAULT_PRECISION (1e18)
+            // =&gt; Precision = REWARD_TOKEN_PRECISION
+            additionalIncentiveAccumulatedPerVaultShare = (timeSinceLastAccumulation * DEFAULT_PRECISION * state.emissionRatePerYear)
+                / (YEAR * effectiveSupplyBefore);
+        }
+
+        return state.accumulatedRewardPerVaultShare + additionalIncentiveAccumulatedPerVaultShare;
+    }
+
+    /// @notice Executes the proper call for various rewarder types.
+    function _executeClaim() internal virtual;
+    function _withdrawFromPreviousRewardPool(RewardPoolStorage memory oldRewardPool) internal virtual;
+    function _depositIntoNewRewardPool(address poolToken, uint256 poolTokens, RewardPoolStorage memory newRewardPool) internal virtual;
+}</code></pre></section>
+<section id="AbstractSingleSidedLP.sol"><h2>AbstractSingleSidedLP.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import &quot;../interfaces/ISingleSidedLP.sol&quot;;
+import {AbstractYieldStrategy} from &quot;../AbstractYieldStrategy.sol&quot;;
+import {DEFAULT_PRECISION, ADDRESS_REGISTRY} from &quot;../utils/Constants.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {Trade, TradeType} from &quot;../interfaces/ITradingModule.sol&quot;;
+import {RewardManagerMixin} from &quot;../rewards/RewardManagerMixin.sol&quot;;
+import {IWithdrawRequestManager, WithdrawRequest, TokenizedWithdrawRequest} from &quot;../interfaces/IWithdrawRequestManager.sol&quot;;
+import {TokenUtils} from &quot;../utils/TokenUtils.sol&quot;;
+import {
+    CannotEnterPosition,
+    WithdrawRequestNotFinalized,
+    PoolShareTooHigh,
+    AssetRemaining
+} from &quot;../interfaces/Errors.sol&quot;;
+
+/**
+ * @notice Base contract for the SingleSidedLP strategy. This strategy deposits into an LP
+ * pool given a single borrowed currency. Allows for users to trade via external exchanges
+ * during entry and exit, but the general expected behavior is single sided entries and
+ * exits. Inheriting contracts will fill in the implementation details for integration with
+ * the external DEX pool.
+ */
+abstract contract AbstractSingleSidedLP is RewardManagerMixin {
+    using TokenUtils for ERC20;
+
+    uint256 immutable MAX_POOL_SHARE;
+    address internal immutable LP_LIB;
+
+    /************************************************************************
+     * VIRTUAL FUNCTIONS                                                    *
+     * These virtual functions are used to isolate implementation specific  *
+     * behavior.                                                            *
+     ************************************************************************/
+
+    /// @notice Total number of tokens held by the LP token
+    function NUM_TOKENS() internal view virtual returns (uint256);
+
+    /// @notice Addresses of tokens held and decimal places of each token. ETH will always be
+    /// recorded in this array as address(0)
+    function TOKENS() internal view virtual returns (ERC20[] memory);
+
+    /// @notice Index of the TOKENS() array that refers to the primary borrowed currency by the
+    /// leveraged vault. All valuations are done in terms of this currency.
+    function PRIMARY_INDEX() internal view virtual returns (uint256);
+
+    /// @notice Returns the total supply of the pool token. Is a virtual function because
+    /// ComposableStablePools use a &quot;virtual supply&quot; and a different method must be called
+    /// to get the actual total supply.
+    function _totalPoolSupply() internal view virtual returns (uint256);
+
+    /// @dev Checks that the reentrancy context is valid
+    function _checkReentrancyContext() internal virtual;
+
+    /// @notice Called once during initialization to set the initial token approvals.
+    function _initialApproveTokens() internal virtual {
+        _delegateCall(LP_LIB, abi.encodeWithSelector(ILPLib.initialApproveTokens.selector));
+    }
+
+    /// @notice Implementation specific wrapper for joining a pool with the given amounts. Will also
+    /// stake on the relevant booster protocol.
+    function _joinPoolAndStake(
+        uint256[] memory amounts, uint256 minPoolClaim
+    ) internal virtual {
+        _delegateCall(LP_LIB, abi.encodeWithSelector(ILPLib.joinPoolAndStake.selector, amounts, minPoolClaim));
+    }
+
+    /// @notice Implementation specific wrapper for unstaking from the booster protocol and withdrawing
+    /// funds from the LP pool
+    function _unstakeAndExitPool(
+        uint256 poolClaim, uint256[] memory minAmounts, bool isSingleSided
+    ) internal virtual returns (uint256[] memory exitBalances) {
+        bytes memory result = _delegateCall(LP_LIB, abi.encodeWithSelector(
+            ILPLib.unstakeAndExitPool.selector, poolClaim, minAmounts, isSingleSided
+        ));
+        exitBalances = abi.decode(result, (uint256[]));
+    }
+
+    /************************************************************************
+     * CLASS FUNCTIONS                                                      *
+     * Below are class functions that represent the base implementation     *
+     * of the Single Sided LP strategy.                                     *
+     ************************************************************************/
+
+    constructor(
+        uint256 _maxPoolShare,
+        address _asset,
+        address _yieldToken,
+        uint256 _feeRate,
+        address _rewardManager,
+        uint8 _yieldTokenDecimals,
+        IWithdrawRequestManager _withdrawRequestManager
+    ) RewardManagerMixin( _asset, _yieldToken, _feeRate, _rewardManager, _yieldTokenDecimals) {
+        MAX_POOL_SHARE = _maxPoolShare;
+        // Although there will be multiple withdraw request managers, we only need to set one here
+        // to check whether or not a withdraw request is pending. If any one of the withdraw requests
+        // is not finalized then the entire withdraw will revert and the user will remain in a pending
+        // withdraw state.
+        withdrawRequestManager = _withdrawRequestManager;
+    }
+
+    function _initialize(bytes calldata data) internal override {
+        super._initialize(data);
+        _initialApproveTokens();
+    }
+
+    function _mintYieldTokens(
+        uint256 assets,
+        address /* receiver */,
+        bytes memory depositData
+    ) internal override {
+        DepositParams memory params = abi.decode(depositData, (DepositParams));
+        uint256[] memory amounts = new uint256[](NUM_TOKENS());
+
+        // If depositTrades are specified, then parts of the initial deposit are traded
+        // for corresponding amounts of the other pool tokens via external exchanges. If
+        // these amounts are not specified then the pool will just be joined single sided.
+        // Deposit trades are not automatically enabled on vaults since the trading module
+        // requires explicit permission for every token that can be sold by an address.
+        if (params.depositTrades.length &gt; 0) {
+            // NOTE: amounts is modified in place
+            _executeDepositTrades(assets, amounts, params.depositTrades);
+        } else {
+            // This is a single sided entry, will revert if index is out of bounds
+            amounts[PRIMARY_INDEX()] = assets;
+        }
+
+        _joinPoolAndStake(amounts, params.minPoolClaim);
+
+        _checkPoolShare();
+    }
+
+    function _checkPoolShare() internal view virtual {
+        // Checks that the vault does not own too large of a portion of the pool. If this is the case,
+        // single sided exits may have a detrimental effect on the liquidity.
+        uint256 maxSupplyThreshold = (_totalPoolSupply() * MAX_POOL_SHARE) / DEFAULT_PRECISION;
+        // This is incumbent on a 1-1 ratio between the lpToken and the yieldToken, if that is not the
+        // case then this function must be overridden.
+        uint256 poolClaim = _yieldTokenBalance();
+        if (maxSupplyThreshold &lt; poolClaim) revert PoolShareTooHigh(poolClaim, maxSupplyThreshold);
+    }
+
+    function _redeemShares(
+        uint256 sharesToRedeem,
+        address sharesOwner,
+        bool isEscrowed,
+        bytes memory redeemData
+    ) internal override {
+        RedeemParams memory params = abi.decode(redeemData, (RedeemParams));
+
+        // Stores the amount of each token that has been withdrawn from the pool.
+        uint256[] memory exitBalances;
+        bool isSingleSided;
+        ERC20[] memory tokens;
+        if (isEscrowed) {
+            // Attempt to withdraw all pending requests, tokens may be different if there
+            // is a withdraw request.
+            (exitBalances, tokens) = _withdrawPendingRequests(sharesOwner, sharesToRedeem);
+            // If there are pending requests, then we are not single sided by definition
+            isSingleSided = false;
+        } else {
+            isSingleSided = params.redemptionTrades.length == 0;
+            uint256 yieldTokensBurned = convertSharesToYieldToken(sharesToRedeem);
+            exitBalances = _unstakeAndExitPool(yieldTokensBurned, params.minAmounts, isSingleSided);
+            tokens = TOKENS();
+        }
+
+        if (!isSingleSided) {
+            // If not a single sided trade, will execute trades back to the primary token on
+            // external exchanges. This method will execute EXACT_IN trades to ensure that
+            // all of the balance in the other tokens is sold for primary.
+            // Redemption trades are not automatically enabled on vaults since the trading module
+            // requires explicit permission for every token that can be sold by an address.
+            _executeRedemptionTrades(tokens, exitBalances, params.redemptionTrades);
+        }
+    }
+
+    /// @dev Trades the amount of primary token into other secondary tokens prior to entering a pool.
+    function _executeDepositTrades(
+        uint256 assets,
+        uint256[] memory amounts,
+        TradeParams[] memory depositTrades
+    ) internal {
+        ERC20[] memory tokens = TOKENS();
+        Trade memory trade;
+        uint256 assetRemaining = assets;
+
+        for (uint256 i; i &lt; amounts.length; i++) {
+            if (i == PRIMARY_INDEX()) continue;
+            TradeParams memory t = depositTrades[i];
+
+            if (t.tradeAmount &gt; 0) {
+                trade = Trade({
+                    tradeType: t.tradeType,
+                    sellToken: address(asset),
+                    buyToken: address(tokens[i]),
+                    amount: t.tradeAmount,
+                    limit: t.minPurchaseAmount,
+                    deadline: block.timestamp,
+                    exchangeData: t.exchangeData
+                });
+                // Always selling the primaryToken and buying the secondary token.
+                (uint256 amountSold, uint256 amountBought) = _executeTrade(trade, t.dexId);
+
+                amounts[i] = amountBought;
+                // Will revert on underflow if over-selling the primary borrowed
+                assetRemaining -= amountSold;
+            }
+        }
+
+        if (PRIMARY_INDEX() &lt; amounts.length) {
+            amounts[PRIMARY_INDEX()] = assetRemaining;
+        } else if (0 &lt; assetRemaining) {
+            // This can happen if the asset is not in the pool and we need to trade all
+            // of the remaining asset for tokens in the pool.
+            revert AssetRemaining(assetRemaining);
+        }
+    }
+
+    /// @dev Trades the amount of secondary tokens into the primary token after exiting a pool.
+    function _executeRedemptionTrades(
+        ERC20[] memory tokens,
+        uint256[] memory exitBalances,
+        TradeParams[] memory redemptionTrades
+    ) internal returns (uint256 finalPrimaryBalance) {
+        for (uint256 i; i &lt; exitBalances.length; i++) {
+            if (address(tokens[i]) == address(asset)) {
+                finalPrimaryBalance += exitBalances[i];
+                continue;
+            }
+
+            TradeParams memory t = redemptionTrades[i];
+            // Always sell the entire exit balance to the primary token
+            if (exitBalances[i] &gt; 0) {
+                Trade memory trade = Trade({
+                    tradeType: t.tradeType,
+                    sellToken: address(tokens[i]),
+                    buyToken: address(asset),
+                    amount: exitBalances[i],
+                    limit: t.minPurchaseAmount,
+                    deadline: block.timestamp,
+                    exchangeData: t.exchangeData
+                });
+                (/* */, uint256 amountBought) = _executeTrade(trade, t.dexId);
+
+                finalPrimaryBalance += amountBought;
+            }
+        }
+    }
+
+    function _preLiquidation(address liquidateAccount, address liquidator, uint256 sharesToLiquidate, uint256 accountSharesHeld) internal override {
+        _checkReentrancyContext();
+        return super._preLiquidation(liquidateAccount, liquidator, sharesToLiquidate, accountSharesHeld);
+    }
+
+    function __postLiquidation(address liquidator, address liquidateAccount, uint256 sharesToLiquidator) internal override returns (bool didTokenize) {
+        bytes memory result = _delegateCall(LP_LIB, abi.encodeWithSelector(
+            ILPLib.tokenizeWithdrawRequest.selector, liquidateAccount, liquidator, sharesToLiquidator
+        ));
+        didTokenize = abi.decode(result, (bool));
+    }
+
+    function __initiateWithdraw(
+        address account,
+        uint256 yieldTokenAmount,
+        uint256 sharesHeld,
+        bytes memory data
+    ) internal override returns (uint256 requestId) {
+        WithdrawParams memory params = abi.decode(data, (WithdrawParams));
+
+        uint256[] memory exitBalances = _unstakeAndExitPool({
+            poolClaim: yieldTokenAmount,
+            minAmounts: params.minAmounts,
+            // When initiating a withdraw, we always exit proportionally
+            isSingleSided: false
+        });
+
+        bytes memory result = _delegateCall(LP_LIB, abi.encodeWithSelector(
+            ILPLib.initiateWithdraw.selector, account, sharesHeld, exitBalances, params.withdrawData
+        ));
+        uint256[] memory requestIds = abi.decode(result, (uint256[]));
+        // Although we get multiple requests ids, we just return the first one here. The rest will be
+        // observable off chain.
+        requestId = requestIds[0];
+    }
+
+    function _withdrawPendingRequests(
+        address sharesOwner,
+        uint256 sharesToRedeem
+    ) internal returns (uint256[] memory exitBalances, ERC20[] memory tokens) {
+        bytes memory result = _delegateCall(LP_LIB, abi.encodeWithSelector(
+            ILPLib.finalizeAndRedeemWithdrawRequest.selector, sharesOwner, sharesToRedeem
+        ));
+        (exitBalances, tokens) = abi.decode(result, (uint256[], ERC20[]));
+    }
+
+    /// @notice Returns the total value in terms of the borrowed token of the account&#x27;s position
+    function convertToAssets(uint256 shares) public view override returns (uint256) {
+        if (t_CurrentAccount != address(0) &amp;&amp; _isWithdrawRequestPending(t_CurrentAccount)) {
+            return ILPLib(LP_LIB).getWithdrawRequestValue(t_CurrentAccount, asset, shares);
+        }
+
+        return super.convertToAssets(shares);
+    }
+
+    function _isWithdrawRequestPending(address account) internal view override returns (bool) {
+        return ILPLib(LP_LIB).hasPendingWithdrawals(account);
+    }
+}
+
+abstract contract BaseLPLib is ILPLib {
+    using TokenUtils for ERC20;
+
+    function TOKENS() internal view virtual returns (ERC20[] memory);
+
+    /// @inheritdoc ILPLib
+    function getWithdrawRequestValue(
+        address account,
+        address asset,
+        uint256 shares
+    ) external view returns (uint256 totalValue) {
+        ERC20[] memory tokens = TOKENS();
+
+        for (uint256 i; i &lt; tokens.length; i++) {
+            IWithdrawRequestManager manager = ADDRESS_REGISTRY.getWithdrawRequestManager(address(tokens[i]));
+            // This is called as a view function, not a delegate call so use the msg.sender to get
+            // the correct vault address
+            (bool hasRequest, uint256 value) = manager.getWithdrawRequestValue(msg.sender, account, asset, shares);
+            // Ensure that this is true so that we do not lose any value.
+            require(hasRequest);
+            totalValue += value;
+        }
+    }
+
+    /// @inheritdoc ILPLib
+    function hasPendingWithdrawals(address account) external view override returns (bool) {
+        ERC20[] memory tokens = TOKENS();
+        for (uint256 i; i &lt; tokens.length; i++) {
+            IWithdrawRequestManager manager = ADDRESS_REGISTRY.getWithdrawRequestManager(address(tokens[i]));
+            if (address(manager) == address(0)) continue;
+            // This is called as a view function, not a delegate call so use the msg.sender to get
+            // the correct vault address
+            (WithdrawRequest memory w, /* */) = manager.getWithdrawRequest(msg.sender, account);
+            if (w.requestId != 0) return true;
+        }
+
+        return false;
+    }
+
+    /// @inheritdoc ILPLib
+    function initiateWithdraw(
+        address account,
+        uint256 sharesHeld,
+        uint256[] calldata exitBalances,
+        bytes[] calldata withdrawData
+    ) external override returns (uint256[] memory requestIds) {
+        ERC20[] memory tokens = TOKENS();
+
+        requestIds = new uint256[](exitBalances.length);
+        for (uint256 i; i &lt; exitBalances.length; i++) {
+            if (exitBalances[i] == 0) continue;
+            IWithdrawRequestManager manager = ADDRESS_REGISTRY.getWithdrawRequestManager(address(tokens[i]));
+
+            tokens[i].checkApprove(address(manager), exitBalances[i]);
+            // Will revert if there is already a pending withdraw
+            requestIds[i] = manager.initiateWithdraw({
+                account: account,
+                yieldTokenAmount: exitBalances[i],
+                sharesAmount: sharesHeld,
+                data: withdrawData[i]
+            });
+        }
+    }
+
+    /// @inheritdoc ILPLib
+    function finalizeAndRedeemWithdrawRequest(
+        address sharesOwner,
+        uint256 sharesToRedeem
+    ) external override returns (uint256[] memory exitBalances, ERC20[] memory withdrawTokens) {
+        ERC20[] memory tokens = TOKENS();
+
+        exitBalances = new uint256[](tokens.length);
+        withdrawTokens = new ERC20[](tokens.length);
+
+        WithdrawRequest memory w;
+        for (uint256 i; i &lt; tokens.length; i++) {
+            IWithdrawRequestManager manager = ADDRESS_REGISTRY.getWithdrawRequestManager(address(tokens[i]));
+            (w, /* */) = manager.getWithdrawRequest(address(this), sharesOwner);
+
+            uint256 yieldTokensBurned = uint256(w.yieldTokenAmount) * sharesToRedeem / w.sharesAmount;
+            bool finalized;
+            (exitBalances[i], finalized) = manager.finalizeAndRedeemWithdrawRequest({
+                account: sharesOwner, withdrawYieldTokenAmount: yieldTokensBurned, sharesToBurn: sharesToRedeem
+            });
+            if (!finalized) revert WithdrawRequestNotFinalized(w.requestId);
+            withdrawTokens[i] = ERC20(manager.WITHDRAW_TOKEN());
+        }
+    }
+
+    /// @inheritdoc ILPLib
+    function tokenizeWithdrawRequest(
+        address liquidateAccount,
+        address liquidator,
+        uint256 sharesToLiquidator
+    ) external override returns (bool didTokenize) {
+        ERC20[] memory tokens = TOKENS();
+        for (uint256 i; i &lt; tokens.length; i++) {
+            IWithdrawRequestManager manager = ADDRESS_REGISTRY.getWithdrawRequestManager(address(tokens[i]));
+            if (address(manager) == address(0)) continue;
+            // If there is no withdraw request then this will be a noop, make sure to OR with the previous result
+            // to ensure that the result is always set but it is done after so the tokenizeWithdrawRequest call
+            // is not short circuited.
+            didTokenize = manager.tokenizeWithdrawRequest(liquidateAccount, liquidator, sharesToLiquidator) || didTokenize;
+        }
+    }
+}
+</code></pre></section>
+<section id="AbstractStakingStrategy.sol"><h2>AbstractStakingStrategy.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {WithdrawRequestNotFinalized} from &quot;../interfaces/Errors.sol&quot;;
+import {AbstractYieldStrategy} from &quot;../AbstractYieldStrategy.sol&quot;;
+import {
+    IWithdrawRequestManager,
+    WithdrawRequest,
+    TokenizedWithdrawRequest
+} from &quot;../interfaces/IWithdrawRequestManager.sol&quot;;
+import {ADDRESS_REGISTRY} from &quot;../utils/Constants.sol&quot;;
+import {Trade, TradeType, TRADING_MODULE} from &quot;../interfaces/ITradingModule.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {SafeERC20} from &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+
+struct RedeemParams {
+    uint8 dexId;
+    uint256 minPurchaseAmount;
+    bytes exchangeData;
+}
+
+struct DepositParams {
+    uint8 dexId;
+    uint256 minPurchaseAmount;
+    bytes exchangeData;
+}
+
+/**
+ * Supports vaults that borrow a token and stake it into a token that earns yield but may
+ * require some illiquid redemption period.
+ */
+abstract contract AbstractStakingStrategy is AbstractYieldStrategy {
+    using SafeERC20 for ERC20;
+
+    address internal immutable withdrawToken;
+
+    constructor(
+        address _asset,
+        address _yieldToken,
+        uint256 _feeRate,
+        IWithdrawRequestManager _withdrawRequestManager
+    ) AbstractYieldStrategy(_asset, _yieldToken, _feeRate, ERC20(_yieldToken).decimals()) {
+        // For Pendle PT the yield token does not define the withdraw request manager,
+        // it is the token out sy
+        withdrawRequestManager = _withdrawRequestManager;
+        withdrawToken = address(withdrawRequestManager) != address(0) ? withdrawRequestManager.WITHDRAW_TOKEN() : address(0);
+    }
+
+    /// @notice Returns the total value in terms of the borrowed token of the account&#x27;s position
+    function convertToAssets(uint256 shares) public view override returns (uint256) {
+        if (t_CurrentAccount != address(0) &amp;&amp; _isWithdrawRequestPending(t_CurrentAccount)) {
+            (bool hasRequest, uint256 value) = withdrawRequestManager.getWithdrawRequestValue(
+                address(this), t_CurrentAccount, asset, shares
+            );
+
+            // If the account does not have a withdraw request then this will fall through
+            // to the super implementation.
+            if (hasRequest) return value;
+        }
+
+        return super.convertToAssets(shares);
+    }
+
+    function _initiateWithdraw(
+        address account,
+        uint256 yieldTokenAmount,
+        uint256 sharesHeld,
+        bytes memory data
+    ) internal override virtual returns (uint256 requestId) {
+        ERC20(yieldToken).approve(address(withdrawRequestManager), yieldTokenAmount);
+        requestId = withdrawRequestManager.initiateWithdraw({
+            account: account, yieldTokenAmount: yieldTokenAmount, sharesAmount: sharesHeld, data: data
+        });
+    }
+
+    /// @dev By default we can use the withdraw request manager to stake the tokens
+    function _mintYieldTokens(uint256 assets, address /* receiver */, bytes memory depositData) internal override virtual {
+        ERC20(asset).approve(address(withdrawRequestManager), assets);
+        withdrawRequestManager.stakeTokens(address(asset), assets, depositData);
+    }
+
+    function _redeemShares(
+        uint256 sharesToRedeem,
+        address sharesOwner,
+        bool isEscrowed,
+        bytes memory redeemData
+    ) internal override {
+        if (isEscrowed) {
+            (WithdrawRequest memory w, /* */) = withdrawRequestManager.getWithdrawRequest(address(this), sharesOwner);
+            uint256 yieldTokensBurned = uint256(w.yieldTokenAmount) * sharesToRedeem / w.sharesAmount;
+
+            (uint256 tokensClaimed, bool finalized) = withdrawRequestManager.finalizeAndRedeemWithdrawRequest({
+                account: sharesOwner, withdrawYieldTokenAmount: yieldTokensBurned, sharesToBurn: sharesToRedeem
+            });
+            if (!finalized) revert WithdrawRequestNotFinalized(w.requestId);
+
+            // Trades may be required here if the borrowed token is not the same as what is
+            // received when redeeming.
+            if (asset != withdrawToken) {
+                RedeemParams memory params = abi.decode(redeemData, (RedeemParams));
+                Trade memory trade = Trade({
+                    tradeType: TradeType.EXACT_IN_SINGLE,
+                    sellToken: address(withdrawToken),
+                    buyToken: address(asset),
+                    amount: tokensClaimed,
+                    limit: params.minPurchaseAmount,
+                    deadline: block.timestamp,
+                    exchangeData: params.exchangeData
+                });
+
+                _executeTrade(trade, params.dexId);
+            }
+        } else {
+            uint256 yieldTokensBurned = convertSharesToYieldToken(sharesToRedeem);
+            _executeInstantRedemption(yieldTokensBurned, redeemData);
+        }
+    }
+
+    /// @notice Default implementation for an instant redemption is to sell the staking token to the
+    /// borrow token through the trading module. Can be overridden if required for different implementations.
+    function _executeInstantRedemption(
+        uint256 yieldTokensToRedeem,
+        bytes memory redeemData
+    ) internal virtual returns (uint256 assetsPurchased) {
+        RedeemParams memory params = abi.decode(redeemData, (RedeemParams));
+        Trade memory trade = Trade({
+            tradeType: TradeType.EXACT_IN_SINGLE,
+            sellToken: address(yieldToken),
+            buyToken: address(asset),
+            amount: yieldTokensToRedeem,
+            limit: params.minPurchaseAmount,
+            deadline: block.timestamp,
+            exchangeData: params.exchangeData
+        });
+
+        // Executes a trade on the given Dex, the vault must have permissions set for
+        // each dex and token it wants to sell.
+        (/* */, assetsPurchased) = _executeTrade(trade, params.dexId);
+    }
+    
+    function _preLiquidation(address, address, uint256, uint256) internal override { /* no-op */ }
+
+    function _postLiquidation(address liquidator, address liquidateAccount, uint256 sharesToLiquidator) internal override returns (bool didTokenize) {
+        if (address(withdrawRequestManager) != address(0)) {
+            // No need to accrue fees because neither the total supply or total yield token balance is changing. If there
+            // is no withdraw request then this will be a noop.
+            didTokenize = withdrawRequestManager.tokenizeWithdrawRequest(liquidateAccount, liquidator, sharesToLiquidator);
+        }
+    }
+
+}</code></pre></section>
+<section id="AbstractWithdrawRequestManager.sol"><h2>AbstractWithdrawRequestManager.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import &quot;../interfaces/IWithdrawRequestManager.sol&quot;;
+import {Initializable} from &quot;../proxy/Initializable.sol&quot;;
+import {ClonedCoolDownHolder} from &quot;./ClonedCoolDownHolder.sol&quot;;
+import {
+    Unauthorized,
+    ExistingWithdrawRequest,
+    NoWithdrawRequest,
+    InvalidWithdrawRequestTokenization
+} from &quot;../interfaces/Errors.sol&quot;;
+import {TypeConvert} from &quot;../utils/TypeConvert.sol&quot;;
+import {TokenUtils} from &quot;../utils/TokenUtils.sol&quot;;
+import {ADDRESS_REGISTRY, DEFAULT_PRECISION} from &quot;../utils/Constants.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {SafeERC20} from &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import {Trade, TradeType, TRADING_MODULE, nProxy, TradeFailed} from &quot;../interfaces/ITradingModule.sol&quot;;
+
+
+/**
+ * Library to handle potentially illiquid withdraw requests of staking tokens where there
+ * is some indeterminate lock up time before tokens can be redeemed. Examples would be withdraws
+ * of staked or restaked ETH, tokens like sUSDe or stkAave which have cooldown periods before they
+ * can be withdrawn.
+ *
+ * Primarily, this library tracks the withdraw request and an associated identifier for the withdraw
+ * request. It also allows for the withdraw request to be &quot;tokenized&quot; so that shares of the withdraw
+ * request can be liquidated.
+ */
+abstract contract AbstractWithdrawRequestManager is IWithdrawRequestManager, Initializable {
+    using SafeERC20 for ERC20;
+    using TypeConvert for uint256;
+
+    /// @inheritdoc IWithdrawRequestManager
+    address public immutable override YIELD_TOKEN;
+    /// @inheritdoc IWithdrawRequestManager
+    address public immutable override WITHDRAW_TOKEN;
+    /// @inheritdoc IWithdrawRequestManager
+    address public immutable override STAKING_TOKEN;
+
+    mapping(address =&gt; bool) public override isApprovedVault;
+    mapping(address vault =&gt; mapping(address account =&gt; WithdrawRequest)) private s_accountWithdrawRequest;
+    mapping(uint256 requestId =&gt; TokenizedWithdrawRequest) private s_tokenizedWithdrawRequest;
+
+    constructor(address _withdrawToken, address _yieldToken, address _stakingToken) Initializable() {
+        WITHDRAW_TOKEN = _withdrawToken;
+        YIELD_TOKEN = _yieldToken;
+        STAKING_TOKEN = _stakingToken;
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != ADDRESS_REGISTRY.upgradeAdmin()) revert Unauthorized(msg.sender);
+        _;
+    }
+
+    /// @dev Ensures that only approved vaults can initiate withdraw requests.
+    modifier onlyApprovedVault() {
+        if (!isApprovedVault[msg.sender]) revert Unauthorized(msg.sender);
+        _;
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function getWithdrawRequest(address vault, address account) public view override
+        returns (WithdrawRequest memory w, TokenizedWithdrawRequest memory s) {
+        w = s_accountWithdrawRequest[vault][account];
+        s = s_tokenizedWithdrawRequest[w.requestId];
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function isPendingWithdrawRequest(address vault, address account) public view override returns (bool) {
+        return s_accountWithdrawRequest[vault][account].requestId != 0;
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function setApprovedVault(address vault, bool isApproved) external override onlyOwner {
+        isApprovedVault[vault] = isApproved;
+        emit ApprovedVault(vault, isApproved);
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function stakeTokens(
+        address depositToken,
+        uint256 amount,
+        bytes calldata data
+    ) external override onlyApprovedVault returns (uint256 yieldTokensMinted) {
+        uint256 initialYieldTokenBalance = ERC20(YIELD_TOKEN).balanceOf(address(this));
+        ERC20(depositToken).safeTransferFrom(msg.sender, address(this), amount);
+        (uint256 stakeTokenAmount, bytes memory stakeData) = _preStakingTrade(depositToken, amount, data);
+        _stakeTokens(stakeTokenAmount, stakeData);
+
+        yieldTokensMinted = ERC20(YIELD_TOKEN).balanceOf(address(this)) - initialYieldTokenBalance;
+        ERC20(YIELD_TOKEN).safeTransfer(msg.sender, yieldTokensMinted);
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function initiateWithdraw(
+        address account,
+        uint256 yieldTokenAmount,
+        uint256 sharesAmount,
+        bytes calldata data
+    ) external override onlyApprovedVault returns (uint256 requestId) {
+        WithdrawRequest storage accountWithdraw = s_accountWithdrawRequest[msg.sender][account];
+        if (accountWithdraw.requestId != 0) revert ExistingWithdrawRequest(msg.sender, account, accountWithdraw.requestId);
+
+        // Receive the requested amount of yield tokens from the approved vault.
+        ERC20(YIELD_TOKEN).safeTransferFrom(msg.sender, address(this), yieldTokenAmount);
+
+        requestId = _initiateWithdrawImpl(account, yieldTokenAmount, data);
+        accountWithdraw.requestId = requestId;
+        accountWithdraw.yieldTokenAmount = yieldTokenAmount.toUint120();
+        accountWithdraw.sharesAmount = sharesAmount.toUint120();
+        s_tokenizedWithdrawRequest[requestId] = TokenizedWithdrawRequest({
+            totalYieldTokenAmount: yieldTokenAmount.toUint120(),
+            totalWithdraw: 0,
+            finalized: false
+        });
+
+        emit InitiateWithdrawRequest(account, msg.sender, yieldTokenAmount, sharesAmount, requestId);
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function finalizeAndRedeemWithdrawRequest(
+        address account,
+        uint256 withdrawYieldTokenAmount,
+        uint256 sharesToBurn
+    ) external override onlyApprovedVault returns (uint256 tokensWithdrawn, bool finalized) {
+        WithdrawRequest storage s_withdraw = s_accountWithdrawRequest[msg.sender][account];
+        if (s_withdraw.requestId == 0) return (0, false);
+
+        (tokensWithdrawn, finalized) = _finalizeWithdraw(account, s_withdraw);
+
+        if (finalized) {
+            // Allows for partial withdrawal of yield tokens
+            if (withdrawYieldTokenAmount &lt; s_withdraw.yieldTokenAmount) {
+                tokensWithdrawn = tokensWithdrawn * withdrawYieldTokenAmount / s_withdraw.yieldTokenAmount;
+                s_withdraw.sharesAmount -= sharesToBurn.toUint120();
+                s_withdraw.yieldTokenAmount -= withdrawYieldTokenAmount.toUint120();
+            } else {
+                require(s_withdraw.yieldTokenAmount == withdrawYieldTokenAmount);
+                delete s_accountWithdrawRequest[msg.sender][account];
+            }
+
+            ERC20(WITHDRAW_TOKEN).safeTransfer(msg.sender, tokensWithdrawn);
+        }
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function finalizeRequestManual(
+        address vault,
+        address account
+    ) external override returns (uint256 tokensWithdrawn, bool finalized) {
+        WithdrawRequest storage s_withdraw = s_accountWithdrawRequest[vault][account];
+        if (s_withdraw.requestId == 0) revert NoWithdrawRequest(vault, account);
+
+        // Do not transfer any tokens off of this method here. Withdrawn tokens will be held in the
+        // tokenized withdraw request until the vault calls this contract to withdraw the tokens.
+        (tokensWithdrawn, finalized) = _finalizeWithdraw(account, s_withdraw);
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function tokenizeWithdrawRequest(
+        address _from,
+        address _to,
+        uint256 sharesAmount
+    ) external override onlyApprovedVault returns (bool didTokenize) {
+        if (_from == _to) revert();
+
+        WithdrawRequest storage s_withdraw = s_accountWithdrawRequest[msg.sender][_from];
+        uint256 requestId = s_withdraw.requestId;
+        if (requestId == 0 || sharesAmount == 0) return false;
+
+        // Ensure that no withdraw request gets overridden, the _to account always receives their withdraw
+        // request in the account withdraw slot. All storage is updated prior to changes to the `w` storage
+        // variable below.
+        WithdrawRequest storage toWithdraw = s_accountWithdrawRequest[msg.sender][_to];
+        if (toWithdraw.requestId != 0 &amp;&amp; toWithdraw.requestId != requestId) {
+            revert ExistingWithdrawRequest(msg.sender, _to, toWithdraw.requestId);
+        }
+
+        toWithdraw.requestId = requestId;
+
+        if (s_withdraw.sharesAmount &lt; sharesAmount) {
+            // This should never occur given the checks below.
+            revert InvalidWithdrawRequestTokenization();
+        } else if (s_withdraw.sharesAmount == sharesAmount) {
+            // If the resulting vault shares is zero, then delete the request. The _from account&#x27;s
+            // withdraw request is fully transferred to _to. In this case, the _to account receives
+            // the full amount of the _from account&#x27;s withdraw request.
+            toWithdraw.yieldTokenAmount = toWithdraw.yieldTokenAmount + s_withdraw.yieldTokenAmount;
+            toWithdraw.sharesAmount = toWithdraw.sharesAmount + s_withdraw.sharesAmount;
+            delete s_accountWithdrawRequest[msg.sender][_from];
+        } else {
+            // In this case, the amount of yield tokens is transferred from one account to the other.
+            uint256 yieldTokenAmount = s_withdraw.yieldTokenAmount * sharesAmount / s_withdraw.sharesAmount;
+            toWithdraw.yieldTokenAmount = (toWithdraw.yieldTokenAmount + yieldTokenAmount).toUint120();
+            toWithdraw.sharesAmount = (toWithdraw.sharesAmount + sharesAmount).toUint120();
+            s_withdraw.yieldTokenAmount = (s_withdraw.yieldTokenAmount - yieldTokenAmount).toUint120();
+            s_withdraw.sharesAmount = (s_withdraw.sharesAmount - sharesAmount).toUint120();
+        }
+
+        emit WithdrawRequestTokenized(_from, _to, requestId, sharesAmount);
+        return true;
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function rescueTokens(
+        address cooldownHolder, address token, address receiver, uint256 amount
+    ) external override onlyOwner {
+        ClonedCoolDownHolder(cooldownHolder).rescueTokens(ERC20(token), receiver, amount);
+    }
+
+    /// @notice Finalizes a withdraw request and updates the account required to determine how many
+    /// tokens the account has a claim over.
+    function _finalizeWithdraw(
+        address account,
+        WithdrawRequest memory w
+    ) internal returns (uint256 tokensWithdrawn, bool finalized) {
+        TokenizedWithdrawRequest storage s = s_tokenizedWithdrawRequest[w.requestId];
+
+        // If the tokenized request was already finalized in a different transaction
+        // then return the values here and we can short circuit the withdraw impl
+        if (s.finalized) {
+            return (
+                uint256(s.totalWithdraw) * uint256(w.yieldTokenAmount) / uint256(s.totalYieldTokenAmount),
+                true
+            );
+        }
+
+        // These values are the total tokens claimed from the withdraw request, does not
+        // account for potential tokenization.
+        (tokensWithdrawn, finalized) = _finalizeWithdrawImpl(account, w.requestId);
+
+        if (finalized) {
+            s.totalWithdraw = tokensWithdrawn.toUint120();
+            // Safety check to ensure that we do not override a finalized tokenized withdraw request
+            require(s.finalized == false);
+            s.finalized = true;
+
+            tokensWithdrawn = uint256(s.totalWithdraw) * uint256(w.yieldTokenAmount) / uint256(s.totalYieldTokenAmount);
+        } else {
+            // No tokens claimed if not finalized
+            require(tokensWithdrawn == 0);
+        }
+    }
+
+
+    /// @notice Required implementation to begin the withdraw request
+    /// @return requestId some identifier of the withdraw request
+    function _initiateWithdrawImpl(
+        address account,
+        uint256 yieldTokenAmount,
+        bytes calldata data
+    ) internal virtual returns (uint256 requestId);
+
+    /// @notice Required implementation to finalize the withdraw
+    /// @return tokensWithdrawn total tokens claimed as a result of the withdraw, does not
+    /// necessarily represent the tokens that go to the account if the request has been
+    /// tokenized due to liquidation
+    /// @return finalized returns true if the withdraw has been finalized
+    function _finalizeWithdrawImpl(address account, uint256 requestId) internal virtual returns (uint256 tokensWithdrawn, bool finalized);
+
+    /// @notice Required implementation to stake the deposit token to the yield token
+    function _stakeTokens(uint256 amount, bytes memory stakeData) internal virtual;
+
+    /// @dev Allows for the deposit token to be traded into the staking token prior to staking, i.e.
+    /// enables USDC to USDe trades before staking into sUSDe.
+    function _preStakingTrade(address depositToken, uint256 depositAmount, bytes calldata data) internal returns (uint256 amountBought, bytes memory stakeData) {
+        if (depositToken == STAKING_TOKEN) {
+            amountBought = depositAmount;
+            stakeData = data;
+        } else {
+            StakingTradeParams memory params = abi.decode(data, (StakingTradeParams));
+            stakeData = params.stakeData;
+
+            (/* */, amountBought) = _executeTrade(Trade({
+                tradeType: params.tradeType,
+                sellToken: depositToken,
+                buyToken: STAKING_TOKEN,
+                amount: depositAmount,
+                exchangeData: params.exchangeData,
+                limit: params.minPurchaseAmount,
+                deadline: block.timestamp
+            }), params.dexId);
+        }
+    }
+
+    function _executeTrade(
+        Trade memory trade,
+        uint16 dexId
+    ) internal returns (uint256 amountSold, uint256 amountBought) {
+        (bool success, bytes memory result) = nProxy(payable(address(TRADING_MODULE))).getImplementation()
+            .delegatecall(abi.encodeWithSelector(TRADING_MODULE.executeTrade.selector, dexId, trade));
+        if (!success) {
+            assembly {
+                // Copy the return data to memory
+                returndatacopy(0, 0, returndatasize())
+                // Revert with the return data
+                revert(0, returndatasize())
+            }
+        }
+
+        (amountSold, amountBought) = abi.decode(result, (uint256, uint256));
+    }
+
+    /// @inheritdoc IWithdrawRequestManager
+    function getWithdrawRequestValue(
+        address vault,
+        address account,
+        address asset,
+        uint256 shares
+    ) external view override returns (bool hasRequest, uint256 valueInAsset) {
+        WithdrawRequest memory w = s_accountWithdrawRequest[vault][account];
+        if (w.requestId == 0) return (false, 0);
+
+        TokenizedWithdrawRequest memory s = s_tokenizedWithdrawRequest[w.requestId];
+
+        int256 tokenRate;
+        uint256 tokenAmount;
+        uint256 tokenDecimals;
+        uint256 assetDecimals = TokenUtils.getDecimals(asset);
+        if (s.finalized) {
+            // If finalized the withdraw request is locked to the tokens withdrawn
+            (tokenRate, /* */) = TRADING_MODULE.getOraclePrice(WITHDRAW_TOKEN, asset);
+            tokenDecimals = TokenUtils.getDecimals(WITHDRAW_TOKEN);
+            tokenAmount = (uint256(w.yieldTokenAmount) * uint256(s.totalWithdraw)) / uint256(s.totalYieldTokenAmount);
+        } else {
+            // Otherwise we use the yield token rate
+            (tokenRate, /* */) = TRADING_MODULE.getOraclePrice(YIELD_TOKEN, asset);
+            tokenDecimals = TokenUtils.getDecimals(YIELD_TOKEN);
+            tokenAmount = w.yieldTokenAmount;
+        }
+
+        // The trading module always returns a positive rate in 18 decimals so we can safely
+        // cast to uint256
+        uint256 totalValue = (uint256(tokenRate) * tokenAmount * (10 ** assetDecimals)) /
+            ((10 ** tokenDecimals) * DEFAULT_PRECISION);
+        // NOTE: returns the normalized value given the shares input
+        return (true, totalValue * shares / w.sharesAmount);
+    }
+
+}</code></pre></section>
+<section id="AbstractYieldStrategy.sol"><h2>AbstractYieldStrategy.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {SafeERC20} from &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import {IERC20Metadata} from &quot;@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol&quot;;
+import {ReentrancyGuardTransient} from &quot;@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol&quot;;
+import {DEFAULT_DECIMALS, DEFAULT_PRECISION, YEAR, ADDRESS_REGISTRY} from &quot;./utils/Constants.sol&quot;;
+
+import {
+    Unauthorized,
+    UnauthorizedLendingMarketTransfer,
+    InsufficientSharesHeld,
+    CannotLiquidate,
+    CannotEnterPosition,
+    CurrentAccountAlreadySet
+} from &quot;./interfaces/Errors.sol&quot;;
+import {IYieldStrategy} from &quot;./interfaces/IYieldStrategy.sol&quot;;
+import {IOracle} from &quot;./interfaces/Morpho/IOracle.sol&quot;;
+import {TokenUtils} from &quot;./utils/TokenUtils.sol&quot;;
+import {Trade, TradeType, TRADING_MODULE, nProxy, TradeFailed} from &quot;./interfaces/ITradingModule.sol&quot;;
+import {IWithdrawRequestManager} from &quot;./interfaces/IWithdrawRequestManager.sol&quot;;
+import {Initializable} from &quot;./proxy/Initializable.sol&quot;;
+import {ADDRESS_REGISTRY} from &quot;./utils/Constants.sol&quot;;
+import {ILendingRouter} from &quot;./interfaces/ILendingRouter.sol&quot;;
+
+/// @title AbstractYieldStrategy
+/// @notice This is the base contract for all yield strategies, it implements the core logic for
+/// minting, burning and the valuation of tokens.
+abstract contract AbstractYieldStrategy is Initializable, ERC20, ReentrancyGuardTransient, IYieldStrategy {
+    using TokenUtils for ERC20;
+    using SafeERC20 for ERC20;
+
+    uint256 internal constant VIRTUAL_SHARES = 1e6;
+    uint256 internal constant VIRTUAL_YIELD_TOKENS = 1;
+    uint256 internal constant SHARE_PRECISION = DEFAULT_PRECISION * VIRTUAL_SHARES;
+
+    /// @inheritdoc IYieldStrategy
+    address public immutable override asset;
+    /// @inheritdoc IYieldStrategy
+    address public immutable override yieldToken;
+    /// @inheritdoc IYieldStrategy
+    uint256 public immutable override feeRate;
+
+    IWithdrawRequestManager internal immutable withdrawRequestManager;
+
+    uint8 internal immutable _yieldTokenDecimals;
+    uint8 internal immutable _assetDecimals;
+
+    /********* Storage Variables *********/
+    string private s_name;
+    string private s_symbol;
+
+    uint32 private s_lastFeeAccrualTime;
+    uint256 private s_accruedFeesInYieldToken;
+    uint256 private s_escrowedShares;
+    /****** End Storage Variables ******/
+
+    /********* Transient Variables *********/
+    // Used to adjust the valuation call of price(), is set on some methods and
+    // cleared by the lending router using clearCurrentAccount(). This is required to
+    // ensure that the variable is set throughout the entire context of the lending router
+    // call.
+    address internal transient t_CurrentAccount;
+    // Set and cleared on every call to a lending router authorized method
+    address internal transient t_CurrentLendingRouter;
+    // Used to authorize transfers off of the lending market
+    address internal transient t_AllowTransfer_To;
+    uint256 internal transient t_AllowTransfer_Amount;
+    /****** End Transient Variables ******/
+
+    constructor(
+        address _asset,
+        address _yieldToken,
+        uint256 _feeRate,
+        uint8 __yieldTokenDecimals
+    ) ERC20(&quot;&quot;, &quot;&quot;) {
+        feeRate = _feeRate;
+        asset = address(_asset);
+        yieldToken = address(_yieldToken);
+        // Not all yield tokens have a decimals() function (i.e. Convex staked tokens), so we
+        // do have to pass in the decimals as a parameter.
+        _yieldTokenDecimals = __yieldTokenDecimals;
+        _assetDecimals = TokenUtils.getDecimals(_asset);
+    }
+
+    function name() public view override(ERC20, IERC20Metadata) returns (string memory) {
+        return s_name;
+    }
+
+    function symbol() public view override(ERC20, IERC20Metadata) returns (string memory) {
+        return s_symbol;
+    }
+
+    /*** Valuation and Conversion Functions ***/
+
+    /// @inheritdoc IYieldStrategy
+    function convertSharesToYieldToken(uint256 shares) public view override returns (uint256) {
+        // NOTE: rounds down on division
+        return (shares * (_yieldTokenBalance() - feesAccrued() + VIRTUAL_YIELD_TOKENS)) / (effectiveSupply());
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function convertYieldTokenToShares(uint256 yieldTokens) public view returns (uint256) {
+        // NOTE: rounds down on division
+        return (yieldTokens * effectiveSupply()) / (_yieldTokenBalance() - feesAccrued() + VIRTUAL_YIELD_TOKENS);
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function convertToShares(uint256 assets) public view override returns (uint256) {
+        // NOTE: rounds down on division
+        uint256 yieldTokens = assets * (10 ** (_yieldTokenDecimals + DEFAULT_DECIMALS)) / 
+            (convertYieldTokenToAsset() * (10 ** _assetDecimals));
+        return convertYieldTokenToShares(yieldTokens);
+    }
+
+    /// @inheritdoc IOracle
+    function price() public view override returns (uint256) {
+        return convertToAssets(SHARE_PRECISION) * (10 ** (36 - 24));
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function price(address borrower) external override returns (uint256) {
+        // Do not change the current account in this method since this method is not
+        // authenticated and we do not want to have any unexpected side effects.
+        address prevCurrentAccount = t_CurrentAccount;
+
+        t_CurrentAccount = borrower;
+        uint256 p = convertToAssets(SHARE_PRECISION) * (10 ** (36 - 24));
+
+        t_CurrentAccount = prevCurrentAccount;
+        return p;
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function totalAssets() public view override returns (uint256) {
+        return convertToAssets(totalSupply());
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function convertYieldTokenToAsset() public view returns (uint256) {
+        // The trading module always returns a positive rate in 18 decimals so we can safely
+        // cast to uint256
+        (int256 rate , /* */) = TRADING_MODULE.getOraclePrice(yieldToken, asset);
+        return uint256(rate);
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function effectiveSupply() public view returns (uint256) {
+        return (totalSupply() - s_escrowedShares + VIRTUAL_SHARES);
+    }
+
+    /*** Fee Methods ***/
+
+    /// @inheritdoc IYieldStrategy
+    function feesAccrued() public view override returns (uint256 feesAccruedInYieldToken) {
+        return s_accruedFeesInYieldToken + _calculateAdditionalFeesInYieldToken();
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function collectFees() external override {
+        _accrueFees();
+        _transferYieldTokenToOwner(ADDRESS_REGISTRY.feeReceiver(), s_accruedFeesInYieldToken);
+
+        delete s_accruedFeesInYieldToken;
+    }
+
+    /*** Core Functions ***/
+    modifier onlyLendingRouter() {
+        if (ADDRESS_REGISTRY.isLendingRouter(msg.sender) == false) revert Unauthorized(msg.sender);
+        t_CurrentLendingRouter = msg.sender;
+        _;
+        delete t_CurrentLendingRouter;
+    }
+
+    modifier setCurrentAccount(address onBehalf) {
+        if (t_CurrentAccount == address(0)) {
+            t_CurrentAccount = onBehalf;
+        } else if (t_CurrentAccount != onBehalf) {
+            revert CurrentAccountAlreadySet();
+        }
+
+        _;
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function clearCurrentAccount() external override onlyLendingRouter {
+        delete t_CurrentAccount;
+    }
+
+    function mintShares(
+        uint256 assetAmount,
+        address receiver,
+        bytes calldata depositData
+    ) external override onlyLendingRouter setCurrentAccount(receiver) nonReentrant returns (uint256 sharesMinted) {
+        // Cannot mint shares if the receiver has an active withdraw request
+        if (_isWithdrawRequestPending(receiver)) revert CannotEnterPosition();
+        ERC20(asset).safeTransferFrom(t_CurrentLendingRouter, address(this), assetAmount);
+        sharesMinted = _mintSharesGivenAssets(assetAmount, depositData, receiver);
+
+        t_AllowTransfer_To = t_CurrentLendingRouter;
+        t_AllowTransfer_Amount = sharesMinted;
+        // Transfer the shares to the lending router so it can supply collateral
+        _transfer(receiver, t_CurrentLendingRouter, sharesMinted);
+    }
+
+    function burnShares(
+        address sharesOwner,
+        uint256 sharesToBurn,
+        uint256 sharesHeld,
+        bytes calldata redeemData
+    ) external override onlyLendingRouter setCurrentAccount(sharesOwner) nonReentrant returns (uint256 assetsWithdrawn) {
+        assetsWithdrawn = _burnShares(sharesToBurn, sharesHeld, redeemData, sharesOwner);
+
+        // Send all the assets back to the lending router
+        ERC20(asset).safeTransfer(t_CurrentLendingRouter, assetsWithdrawn);
+    }
+
+    function allowTransfer(
+        address to, uint256 amount, address currentAccount
+    ) external setCurrentAccount(currentAccount) onlyLendingRouter {
+        // Sets the transient variables to allow the lending market to transfer shares on exit position
+        // or liquidation.
+        t_AllowTransfer_To = to;
+        t_AllowTransfer_Amount = amount;
+    }
+
+    function preLiquidation(
+        address liquidator,
+        address liquidateAccount,
+        uint256 sharesToLiquidate,
+        uint256 accountSharesHeld
+    ) external onlyLendingRouter {
+        t_CurrentAccount = liquidateAccount;
+        // Liquidator cannot liquidate if they have an active withdraw request, including a tokenized
+        // withdraw request.
+        if (_isWithdrawRequestPending(liquidator)) revert CannotEnterPosition();
+        // Cannot receive a pending withdraw request if the liquidator has a balanceOf
+        if (_isWithdrawRequestPending(liquidateAccount) &amp;&amp; balanceOf(liquidator) &gt; 0) {
+            revert CannotEnterPosition();
+        }
+        _preLiquidation(liquidateAccount, liquidator, sharesToLiquidate, accountSharesHeld);
+
+        // Allow transfers to the lending router which will proxy the call to liquidate.
+        t_AllowTransfer_To = msg.sender;
+        t_AllowTransfer_Amount = sharesToLiquidate;
+    }
+
+    function postLiquidation(
+        address liquidator,
+        address liquidateAccount,
+        uint256 sharesToLiquidator
+    ) external onlyLendingRouter {
+        t_AllowTransfer_To = liquidator;
+        t_AllowTransfer_Amount = sharesToLiquidator;
+        // Transfer the shares to the liquidator from the lending router
+        _transfer(t_CurrentLendingRouter, liquidator, sharesToLiquidator);
+
+        _postLiquidation(liquidator, liquidateAccount, sharesToLiquidator);
+
+        // Clear the transient variables to prevent re-use in a future call.
+        delete t_CurrentAccount;
+    }
+
+    /// @inheritdoc IYieldStrategy
+    /// @dev We do not set the current account here because valuation is not done in this method.
+    /// A native balance does not require a collateral check.
+    function redeemNative(
+        uint256 sharesToRedeem,
+        bytes memory redeemData
+    ) external override nonReentrant returns (uint256 assetsWithdrawn) {
+        uint256 sharesHeld = balanceOf(msg.sender);
+        if (sharesHeld == 0) revert InsufficientSharesHeld();
+
+        assetsWithdrawn = _burnShares(sharesToRedeem, sharesHeld, redeemData, msg.sender);
+        ERC20(asset).safeTransfer(msg.sender, assetsWithdrawn);
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function initiateWithdraw(
+        address account,
+        uint256 sharesHeld,
+        bytes calldata data
+    ) external onlyLendingRouter setCurrentAccount(account) override returns (uint256 requestId) {
+        requestId = _withdraw(account, sharesHeld, data);
+    }
+
+    /// @inheritdoc IYieldStrategy
+    /// @dev We do not set the current account here because valuation is not done in this method. A
+    /// native balance does not require a collateral check.
+    function initiateWithdrawNative(
+        bytes memory data
+    ) external override returns (uint256 requestId) {
+        requestId = _withdraw(msg.sender, balanceOf(msg.sender), data);
+    }
+
+    function _withdraw(address account, uint256 sharesHeld, bytes memory data) internal returns (uint256 requestId) {
+        if (sharesHeld == 0) revert InsufficientSharesHeld();
+
+        // Accrue fees before initiating a withdraw since it will change the effective supply
+        _accrueFees();
+        uint256 yieldTokenAmount = convertSharesToYieldToken(sharesHeld);
+        requestId = _initiateWithdraw(account, yieldTokenAmount, sharesHeld, data);
+        // Escrow the shares after the withdraw since it will change the effective supply
+        // during reward claims when using the RewardManagerMixin.
+        s_escrowedShares += sharesHeld;
+    }
+
+    /*** Private Functions ***/
+
+    function _calculateAdditionalFeesInYieldToken() private view returns (uint256 additionalFeesInYieldToken) {
+        uint256 timeSinceLastFeeAccrual = block.timestamp - s_lastFeeAccrualTime;
+        // e ^ (feeRate * timeSinceLastFeeAccrual / YEAR)
+        uint256 x = (feeRate * timeSinceLastFeeAccrual) / YEAR;
+        if (x == 0) return 0;
+
+        uint256 preFeeUserHeldYieldTokens = _yieldTokenBalance() - s_accruedFeesInYieldToken;
+        // Taylor approximation of e ^ x = 1 + x + x^2 / 2! + x^3 / 3! + ...
+        uint256 eToTheX = DEFAULT_PRECISION + x + (x * x) / (2 * DEFAULT_PRECISION) + (x * x * x) / (6 * DEFAULT_PRECISION * DEFAULT_PRECISION);
+        // Decay the user&#x27;s yield tokens by e ^ (feeRate * timeSinceLastFeeAccrual / YEAR)
+        uint256 postFeeUserHeldYieldTokens = preFeeUserHeldYieldTokens * DEFAULT_PRECISION / eToTheX;
+
+        additionalFeesInYieldToken = preFeeUserHeldYieldTokens - postFeeUserHeldYieldTokens;
+    }
+
+    function _accrueFees() private {
+        if (s_lastFeeAccrualTime == block.timestamp) return;
+        // NOTE: this has to be called before any mints or burns.
+        s_accruedFeesInYieldToken += _calculateAdditionalFeesInYieldToken();
+        s_lastFeeAccrualTime = uint32(block.timestamp);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from != address(0) &amp;&amp; to != address(0)) {
+            // Any transfers off of the lending market must be authorized here, this means that native balances
+            // held cannot be transferred.
+            if (t_AllowTransfer_To != to) revert UnauthorizedLendingMarketTransfer(from, to, value);
+            if (t_AllowTransfer_Amount &lt; value) revert UnauthorizedLendingMarketTransfer(from, to, value);
+
+            delete t_AllowTransfer_To;
+            delete t_AllowTransfer_Amount;
+        }
+
+        super._update(from, to, value);
+    }
+
+    /*** Internal Helper Functions ***/
+
+    function _isWithdrawRequestPending(address account) virtual internal view returns (bool) {
+        return address(withdrawRequestManager) != address(0)
+            &amp;&amp; withdrawRequestManager.isPendingWithdrawRequest(address(this), account);
+    }
+
+    function _yieldTokenBalance() internal view returns (uint256) {
+        return ERC20(yieldToken).balanceOf(address(this));
+    }
+
+    /// @dev Can be used to delegate call to the TradingModule&#x27;s implementation in order to execute a trade
+    function _executeTrade(
+        Trade memory trade,
+        uint16 dexId
+    ) internal returns (uint256 amountSold, uint256 amountBought) {
+        if (trade.tradeType == TradeType.STAKE_TOKEN) {
+            IWithdrawRequestManager wrm = ADDRESS_REGISTRY.getWithdrawRequestManager(trade.buyToken);
+            ERC20(trade.sellToken).checkApprove(address(wrm), trade.amount);
+            amountBought = wrm.stakeTokens(trade.sellToken, trade.amount, trade.exchangeData);
+            return (trade.amount, amountBought);
+        } else {
+            address implementation = nProxy(payable(address(TRADING_MODULE))).getImplementation();
+            bytes memory result = _delegateCall(
+                implementation, abi.encodeWithSelector(TRADING_MODULE.executeTrade.selector, dexId, trade)
+            );
+            (amountSold, amountBought) = abi.decode(result, (uint256, uint256));
+        }
+    }
+
+    function _delegateCall(address target, bytes memory data) internal returns (bytes memory result) {
+        bool success;
+        (success, result) = target.delegatecall(data);
+        if (!success) {
+            assembly {
+                // Copy the return data to memory
+                returndatacopy(0, 0, returndatasize())
+                // Revert with the return data
+                revert(0, returndatasize())
+            }
+        }
+    }
+
+    /*** Virtual Functions ***/
+
+    function _initialize(bytes calldata data) internal override virtual {
+        (string memory _name, string memory _symbol) = abi.decode(data, (string, string));
+        s_name = _name;
+        s_symbol = _symbol;
+
+        s_lastFeeAccrualTime = uint32(block.timestamp);
+        emit VaultCreated(address(this));
+    }
+
+    /// @dev Marked as virtual to allow for RewardManagerMixin to override
+    function _mintSharesGivenAssets(uint256 assets, bytes memory depositData, address receiver) internal virtual returns (uint256 sharesMinted) {
+        if (assets == 0) return 0;
+
+        // First accrue fees on the yield token
+        _accrueFees();
+        uint256 initialYieldTokenBalance = _yieldTokenBalance();
+        _mintYieldTokens(assets, receiver, depositData);
+        uint256 yieldTokensMinted = _yieldTokenBalance() - initialYieldTokenBalance;
+
+        sharesMinted = (yieldTokensMinted * effectiveSupply()) / (initialYieldTokenBalance - feesAccrued() + VIRTUAL_YIELD_TOKENS);
+        _mint(receiver, sharesMinted);
+    }
+
+    /// @dev Marked as virtual to allow for RewardManagerMixin to override
+    function _burnShares(
+        uint256 sharesToBurn,
+        uint256 /* sharesHeld */,
+        bytes memory redeemData,
+        address sharesOwner
+    ) internal virtual returns (uint256 assetsWithdrawn) {
+        if (sharesToBurn == 0) return 0;
+        bool isEscrowed = _isWithdrawRequestPending(sharesOwner);
+
+        uint256 initialAssetBalance = TokenUtils.tokenBalance(asset);
+
+        // First accrue fees on the yield token
+        _accrueFees();
+        _redeemShares(sharesToBurn, sharesOwner, isEscrowed, redeemData);
+        if (isEscrowed) s_escrowedShares -= sharesToBurn;
+
+        uint256 finalAssetBalance = TokenUtils.tokenBalance(asset);
+        assetsWithdrawn = finalAssetBalance - initialAssetBalance;
+
+        // This burns the shares from the sharesOwner&#x27;s balance
+        _burn(sharesOwner, sharesToBurn);
+    }
+
+    /// @dev Some yield tokens (such as Convex staked tokens) cannot be transferred, so we may need
+    /// to override this function.
+    function _transferYieldTokenToOwner(address owner, uint256 yieldTokens) internal virtual {
+        ERC20(yieldToken).safeTransfer(owner, yieldTokens);
+    }
+
+    /// @dev Returns the maximum number of shares that can be liquidated. Allows the strategy to override the
+    /// underlying lending market&#x27;s liquidation logic.
+    function _preLiquidation(address liquidateAccount, address liquidator, uint256 sharesToLiquidate, uint256 accountSharesHeld) internal virtual;
+
+    /// @dev Called after liquidation
+    function _postLiquidation(address liquidator, address liquidateAccount, uint256 sharesToLiquidator) internal virtual returns (bool didTokenize);
+
+    /// @dev Mints yield tokens given a number of assets.
+    function _mintYieldTokens(uint256 assets, address receiver, bytes memory depositData) internal virtual;
+
+    /// @dev Redeems shares
+    function _redeemShares(
+        uint256 sharesToRedeem,
+        address sharesOwner,
+        bool isEscrowed,
+        bytes memory redeemData
+    ) internal virtual;
+
+    function _initiateWithdraw(
+        address account,
+        uint256 yieldTokenAmount,
+        uint256 sharesHeld,
+        bytes memory data
+    ) internal virtual returns (uint256 requestId);
+
+    /// @inheritdoc IYieldStrategy
+    function convertToAssets(uint256 shares) public view virtual override returns (uint256) {
+        uint256 yieldTokens = convertSharesToYieldToken(shares);
+        // NOTE: rounds down on division
+        return (yieldTokens * convertYieldTokenToAsset() * (10 ** _assetDecimals)) /
+            (10 ** (_yieldTokenDecimals + DEFAULT_DECIMALS));
+    }
+
+}
+
+</code></pre></section>
+<section id="Constants.sol"><h2>Constants.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {WETH9} from &quot;../interfaces/IWETH.sol&quot;;
+import {AddressRegistry} from &quot;../proxy/AddressRegistry.sol&quot;;
+
+address constant ETH_ADDRESS = address(0);
+address constant ALT_ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+uint256 constant DEFAULT_PRECISION = 1e18;
+uint256 constant DEFAULT_DECIMALS = 18;
+
+uint256 constant COOLDOWN_PERIOD = 5 minutes;
+uint256 constant YEAR = 365 days;
+
+
+
+// TODO: move these to a deployment file
+uint256 constant CHAIN_ID_MAINNET = 1;
+WETH9 constant WETH = WETH9(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+AddressRegistry constant ADDRESS_REGISTRY = AddressRegistry(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f);</code></pre></section>
+<section id="CurveConvex2Token.sol"><h2>CurveConvex2Token.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {IWithdrawRequestManager} from &quot;../interfaces/IWithdrawRequestManager.sol&quot;;
+import {AbstractSingleSidedLP, BaseLPLib} from &quot;./AbstractSingleSidedLP.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {TokenUtils} from &quot;../utils/TokenUtils.sol&quot;;
+import {ETH_ADDRESS, ALT_ETH_ADDRESS, WETH, CHAIN_ID_MAINNET} from &quot;../utils/Constants.sol&quot;;
+import {SafeERC20} from &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import &quot;../interfaces/Curve/ICurve.sol&quot;;
+import &quot;../interfaces/Curve/IConvex.sol&quot;;
+
+struct DeploymentParams {
+    address pool;
+    address poolToken;
+    address gauge;
+    address convexRewardPool;
+    CurveInterface curveInterface;
+}
+
+contract CurveConvex2Token is AbstractSingleSidedLP {
+
+    uint256 internal constant _NUM_TOKENS = 2;
+
+    ERC20 internal immutable CURVE_POOL_TOKEN;
+    uint8 internal immutable _PRIMARY_INDEX;
+    address internal immutable TOKEN_1;
+    address internal immutable TOKEN_2;
+
+    function NUM_TOKENS() internal pure override returns (uint256) { return _NUM_TOKENS; }
+    function PRIMARY_INDEX() internal view override returns (uint256) { return _PRIMARY_INDEX; }
+    function TOKENS() internal view override returns (ERC20[] memory) {
+        ERC20[] memory tokens = new ERC20[](_NUM_TOKENS);
+        tokens[0] = ERC20(TOKEN_1);
+        tokens[1] = ERC20(TOKEN_2);
+        return tokens;
+    }
+
+    constructor(
+        uint256 _maxPoolShare,
+        address _asset,
+        address _yieldToken,
+        uint256 _feeRate,
+        address _rewardManager,
+        DeploymentParams memory params,
+        IWithdrawRequestManager _withdrawRequestManager
+    ) AbstractSingleSidedLP(_maxPoolShare, _asset, _yieldToken, _feeRate, _rewardManager, 18, _withdrawRequestManager) {
+        CURVE_POOL_TOKEN = ERC20(params.poolToken);
+
+        // We interact with curve pools directly so we never pass the token addresses back
+        // to the curve pools. The amounts are passed back based on indexes instead. Therefore
+        // we can rewrite the token addresses from ALT Eth (0xeeee...) back to (0x0000...) which
+        // is used by the vault internally to represent ETH.
+        TOKEN_1 = _rewriteAltETH(ICurvePool(params.pool).coins(0));
+        TOKEN_2 = _rewriteAltETH(ICurvePool(params.pool).coins(1));
+
+        // Assets may be WETH, so we need to unwrap it in this case.
+        _PRIMARY_INDEX =
+            (TOKEN_1 == _asset || (TOKEN_1 == ETH_ADDRESS &amp;&amp; _asset == address(WETH))) ? 0 :
+            (TOKEN_2 == _asset || (TOKEN_2 == ETH_ADDRESS &amp;&amp; _asset == address(WETH))) ? 1 :
+            // Otherwise the primary index is not set and we will not be able to enter or exit
+            // single sided.
+            type(uint8).max;
+
+        LP_LIB = address(new CurveConvexLib(TOKEN_1, TOKEN_2, _asset, _PRIMARY_INDEX, params));
+    }
+
+    function _rewriteAltETH(address token) private pure returns (address) {
+        return token == address(ALT_ETH_ADDRESS) ? ETH_ADDRESS : address(token);
+    }
+
+    function _transferYieldTokenToOwner(address owner, uint256 yieldTokens) internal override {
+        _delegateCall(LP_LIB, abi.encodeWithSelector(
+            CurveConvexLib.transferYieldTokenToOwner.selector, owner, yieldTokens)
+        );
+    }
+
+    function _totalPoolSupply() internal view override returns (uint256) {
+        return CURVE_POOL_TOKEN.totalSupply();
+    }
+
+    function _checkReentrancyContext() internal override {
+        CurveConvexLib(payable(LP_LIB)).checkReentrancyContext();
+    }
+}
+
+contract CurveConvexLib is BaseLPLib {
+    using SafeERC20 for ERC20;
+    using TokenUtils for ERC20;
+
+    uint256 internal constant _NUM_TOKENS = 2;
+
+    address internal immutable CURVE_POOL;
+    ERC20 internal immutable CURVE_POOL_TOKEN;
+
+    /// @dev Curve gauge contract used when there is no convex reward pool
+    address internal immutable CURVE_GAUGE;
+    /// @dev Convex booster contract used for staking BPT
+    address internal immutable CONVEX_BOOSTER;
+    /// @dev Convex reward pool contract used for unstaking and claiming reward tokens
+    address internal immutable CONVEX_REWARD_POOL;
+    uint256 internal immutable CONVEX_POOL_ID;
+
+    uint8 internal immutable _PRIMARY_INDEX;
+    address internal immutable ASSET;
+    address internal immutable TOKEN_1;
+    address internal immutable TOKEN_2;
+    CurveInterface internal immutable CURVE_INTERFACE;
+
+    // Payable is required for the CurveV1 interface which will execute a transfer
+    // when the remove_liquidity function is called, it only will be done to this contract
+    // during the checkReentrancyContext function.
+    receive() external payable {}
+
+    constructor(
+        address _token1,
+        address _token2,
+        address _asset,
+        uint8 _primaryIndex,
+        DeploymentParams memory params
+    ) {
+        TOKEN_1 = _token1;
+        TOKEN_2 = _token2;
+        ASSET = _asset;
+        _PRIMARY_INDEX = _primaryIndex;
+
+        CURVE_POOL = params.pool;
+        CURVE_GAUGE = params.gauge;
+        CURVE_POOL_TOKEN = ERC20(params.poolToken);
+        CURVE_INTERFACE = params.curveInterface;
+
+        // If the convex reward pool is set then get the booster and pool id, if not then
+        // we will stake on the curve gauge directly.
+        CONVEX_REWARD_POOL = params.convexRewardPool;
+        address convexBooster;
+        uint256 poolId;
+        if (block.chainid == CHAIN_ID_MAINNET &amp;&amp; CONVEX_REWARD_POOL != address(0)) {
+            convexBooster = IConvexRewardPool(CONVEX_REWARD_POOL).operator();
+            poolId = IConvexRewardPool(CONVEX_REWARD_POOL).pid();
+        }
+
+        CONVEX_POOL_ID = poolId;
+        CONVEX_BOOSTER = convexBooster;
+    }
+
+    function checkReentrancyContext() external {
+        uint256[2] memory minAmounts;
+        if (CURVE_INTERFACE == CurveInterface.V1) {
+            ICurve2TokenPoolV1(CURVE_POOL).remove_liquidity(0, minAmounts);
+        } else if (CURVE_INTERFACE == CurveInterface.StableSwapNG) {
+            // Total supply on stable swap has a non-reentrant lock
+            ICurveStableSwapNG(CURVE_POOL).totalSupply();
+        } else if (CURVE_INTERFACE == CurveInterface.V2) {
+            // Curve V2 does a `-1` on the liquidity amount so set the amount removed to 1 to
+            // avoid an underflow.
+            ICurve2TokenPoolV2(CURVE_POOL).remove_liquidity(1, minAmounts, true, address(this));
+        } else {
+            revert();
+        }
+    }
+
+    function TOKENS() internal view override returns (ERC20[] memory) {
+        ERC20[] memory tokens = new ERC20[](_NUM_TOKENS);
+        tokens[0] = ERC20(TOKEN_1);
+        tokens[1] = ERC20(TOKEN_2);
+        return tokens;
+    }
+
+    function initialApproveTokens() external {
+        // If either token is ETH_ADDRESS the check approve will short circuit
+        ERC20(TOKEN_1).checkApprove(address(CURVE_POOL), type(uint256).max);
+        ERC20(TOKEN_2).checkApprove(address(CURVE_POOL), type(uint256).max);
+        if (CONVEX_BOOSTER != address(0)) {
+            CURVE_POOL_TOKEN.checkApprove(address(CONVEX_BOOSTER), type(uint256).max);
+        } else {
+            CURVE_POOL_TOKEN.checkApprove(address(CURVE_GAUGE), type(uint256).max);
+        }
+    }
+
+    function joinPoolAndStake(
+        uint256[] memory _amounts, uint256 minPoolClaim
+    ) external {
+        // Although Curve uses ALT_ETH to represent native ETH, it is rewritten in the Curve2TokenPoolMixin
+        // to the Deployments.ETH_ADDRESS which we use internally.
+        uint256 msgValue;
+        if (TOKEN_1 == ETH_ADDRESS) {
+            msgValue = _amounts[0];
+        } else if (TOKEN_2 == ETH_ADDRESS) {
+            msgValue = _amounts[1];
+        }
+        if (msgValue &gt; 0) WETH.withdraw(msgValue);
+
+        uint256 lpTokens = _enterPool(_amounts, minPoolClaim, msgValue);
+
+        _stakeLpTokens(lpTokens);
+    }
+
+    function unstakeAndExitPool(
+        uint256 poolClaim, uint256[] memory _minAmounts, bool isSingleSided
+    ) external returns (uint256[] memory exitBalances) {
+        _unstakeLpTokens(poolClaim);
+
+        exitBalances = _exitPool(poolClaim, _minAmounts, isSingleSided);
+
+        if (ASSET == address(WETH)) {
+            if (TOKEN_1 == ETH_ADDRESS) {
+                WETH.deposit{value: exitBalances[0]}();
+            } else if (TOKEN_2 == ETH_ADDRESS) {
+                WETH.deposit{value: exitBalances[1]}();
+            }
+        }
+    }
+
+    function transferYieldTokenToOwner(address owner, uint256 yieldTokens) external {
+        _unstakeLpTokens(yieldTokens);
+        CURVE_POOL_TOKEN.safeTransfer(owner, yieldTokens);
+    }
+
+    function _enterPool(
+        uint256[] memory _amounts, uint256 minPoolClaim, uint256 msgValue
+    ) internal returns (uint256) {
+        if (CURVE_INTERFACE == CurveInterface.StableSwapNG) {
+            return ICurveStableSwapNG(CURVE_POOL).add_liquidity{value: msgValue}(
+                _amounts, minPoolClaim
+            );
+        } 
+
+        uint256[2] memory amounts;
+        amounts[0] = _amounts[0];
+        amounts[1] = _amounts[1];
+        if (CURVE_INTERFACE == CurveInterface.V1) {
+            return ICurve2TokenPoolV1(CURVE_POOL).add_liquidity{value: msgValue}(
+                amounts, minPoolClaim
+            );
+        } else if (CURVE_INTERFACE == CurveInterface.V2) {
+            return ICurve2TokenPoolV2(CURVE_POOL).add_liquidity{value: msgValue}(
+                amounts, minPoolClaim, 0 &lt; msgValue // use_eth = true if msgValue &gt; 0
+            );
+        }
+
+        revert();
+    }
+
+    function _exitPool(
+        uint256 poolClaim, uint256[] memory _minAmounts, bool isSingleSided
+    ) internal returns (uint256[] memory exitBalances) {
+        if (isSingleSided) {
+            exitBalances = new uint256[](_NUM_TOKENS);
+            if (CURVE_INTERFACE == CurveInterface.V1 || CURVE_INTERFACE == CurveInterface.StableSwapNG) {
+                // Method signature is the same for v1 and stable swap ng
+                exitBalances[_PRIMARY_INDEX] = ICurve2TokenPoolV1(CURVE_POOL).remove_liquidity_one_coin(
+                    poolClaim, int8(_PRIMARY_INDEX), _minAmounts[_PRIMARY_INDEX]
+                );
+            } else {
+                exitBalances[_PRIMARY_INDEX] = ICurve2TokenPoolV2(CURVE_POOL).remove_liquidity_one_coin(
+                    // Last two parameters are useEth = true and receiver = this contract
+                    poolClaim, _PRIMARY_INDEX, _minAmounts[_PRIMARY_INDEX], true, address(this)
+                );
+            }
+        } else {
+            // Two sided exit
+            if (CURVE_INTERFACE == CurveInterface.StableSwapNG) {
+                return ICurveStableSwapNG(CURVE_POOL).remove_liquidity(poolClaim, _minAmounts);
+            }
+            
+            // Redeem proportionally, min amounts are rewritten to a fixed length array
+            uint256[2] memory minAmounts;
+            minAmounts[0] = _minAmounts[0];
+            minAmounts[1] = _minAmounts[1];
+
+            exitBalances = new uint256[](_NUM_TOKENS);
+            if (CURVE_INTERFACE == CurveInterface.V1) {
+                uint256[2] memory _exitBalances = ICurve2TokenPoolV1(CURVE_POOL).remove_liquidity(poolClaim, minAmounts);
+                exitBalances[0] = _exitBalances[0];
+                exitBalances[1] = _exitBalances[1];
+            } else {
+                exitBalances[0] = TokenUtils.tokenBalance(TOKEN_1);
+                exitBalances[1] = TokenUtils.tokenBalance(TOKEN_2);
+                // Remove liquidity on CurveV2 does not return the exit amounts so we have to measure
+                // them before and after.
+                ICurve2TokenPoolV2(CURVE_POOL).remove_liquidity(
+                    // Last two parameters are useEth = true and receiver = this contract
+                    poolClaim, minAmounts, true, address(this)
+                );
+                exitBalances[0] = TokenUtils.tokenBalance(TOKEN_1) - exitBalances[0];
+                exitBalances[1] = TokenUtils.tokenBalance(TOKEN_2) - exitBalances[1];
+            }
+        }
+    }
+
+    function _stakeLpTokens(uint256 lpTokens) internal {
+        if (CONVEX_BOOSTER != address(0)) {
+            bool success = IConvexBooster(CONVEX_BOOSTER).deposit(CONVEX_POOL_ID, lpTokens, true);
+            require(success);
+        } else {
+            ICurveGauge(CURVE_GAUGE).deposit(lpTokens);
+        }
+    }
+
+
+    function _unstakeLpTokens(uint256 poolClaim) internal {
+        if (CONVEX_REWARD_POOL != address(0)) {
+            bool success = IConvexRewardPool(CONVEX_REWARD_POOL).withdrawAndUnwrap(poolClaim, false);
+            require(success);
+        } else {
+            ICurveGauge(CURVE_GAUGE).withdraw(poolClaim);
+        }
+    }
+
+}</code></pre></section>
+<section id="GenericERC4626.sol"><h2>GenericERC4626.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {AbstractWithdrawRequestManager} from &quot;./AbstractWithdrawRequestManager.sol&quot;;
+import {IERC4626} from &quot;@openzeppelin/contracts/interfaces/IERC4626.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+
+/// @dev Used for ERC4626s that can be staked and unstaked on demand without any additional
+/// time constraints.
+contract GenericERC4626WithdrawRequestManager is AbstractWithdrawRequestManager {
+
+    uint256 private currentRequestId;
+    mapping(uint256 =&gt; uint256) private s_withdrawRequestShares;
+
+    constructor(address _erc4626)
+        AbstractWithdrawRequestManager(IERC4626(_erc4626).asset(), _erc4626, IERC4626(_erc4626).asset()) { }
+
+    function _initiateWithdrawImpl(
+        address /* account */,
+        uint256 sharesToWithdraw,
+        bytes calldata /* data */
+    ) override internal returns (uint256 requestId) {
+        requestId = ++currentRequestId;
+        s_withdrawRequestShares[requestId] = sharesToWithdraw;
+    }
+
+    function _stakeTokens(uint256 amount, bytes memory /* stakeData */) internal override {
+        ERC20(STAKING_TOKEN).approve(address(YIELD_TOKEN), amount);
+        IERC4626(YIELD_TOKEN).deposit(amount, address(this));
+    }
+
+    function _finalizeWithdrawImpl(
+        address /* account */,
+        uint256 requestId
+    ) internal override returns (uint256 tokensClaimed, bool finalized) {
+        uint256 sharesToRedeem = s_withdrawRequestShares[requestId];
+        delete s_withdrawRequestShares[requestId];
+        tokensClaimed = IERC4626(YIELD_TOKEN).redeem(sharesToRedeem, address(this), address(this));
+        finalized = true;
+    }
+
+    function canFinalizeWithdrawRequest(uint256 /* requestId */) public pure override returns (bool) {
+        return true;
+    }
+}</code></pre></section>
+<section id="IRewardManager.sol"><h2>IRewardManager.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+struct VaultRewardState {
+    address rewardToken;
+    uint32 lastAccumulatedTime;
+    uint32 endTime;
+    // Slot #2
+    // If secondary rewards are enabled, they will be streamed to the accounts via
+    // an annual emission rate. If the same reward token is also issued by the LP pool,
+    // those tokens will be added on top of the annual emission rate. If the vault is under
+    // automatic reinvestment mode, the secondary reward token cannot be sold.
+    uint128 emissionRatePerYear; // in internal token precision
+    uint128 accumulatedRewardPerVaultShare;
+}
+
+enum RewardPoolType {
+    _UNUSED,
+    AURA,
+    CONVEX_MAINNET,
+    CONVEX_ARBITRUM
+}
+
+struct RewardPoolStorage {
+    address rewardPool;
+    uint32 lastClaimTimestamp;
+    uint32 forceClaimAfter;
+}
+
+/// Each reward manager is responsible for claiming rewards for a given protocol.
+/// it will be called through a delegatecall from the vault to avoid token transfers
+/// of staked tokens.
+interface IRewardManager {
+
+    event VaultRewardTransfer(address token, address account, uint256 amount);
+    event VaultRewardUpdate(address rewardToken, uint128 emissionRatePerYear, uint32 endTime);
+
+    /// @notice Returns the current reward claim method and reward state
+    /// @return rewardStates Array of vault reward states
+    /// @return rewardPool Reward pool storage
+    function getRewardSettings() external view returns (
+        VaultRewardState[] memory rewardStates,
+        RewardPoolStorage memory rewardPool
+    );
+
+    /// @notice Returns the reward debt for the given reward token and account
+    /// @param rewardToken Address of the reward token
+    /// @param account Address of the account
+    /// @return rewardDebt The reward debt for the account
+    function getRewardDebt(address rewardToken, address account) external view returns (
+        uint256 rewardDebt
+    );
+
+
+    /// @notice Updates account rewards during enter and exit vault operations, only
+    /// callable via delegatecall from inside the vault
+    /// @param account Address of the account
+    /// @param effectiveSupplyBefore Total vault shares before the operation
+    /// @param accountSharesBefore Number of shares before the operation
+    /// @param accountSharesAfter Number of shares after the operation
+    /// @param sharesInEscrow Whether the shares are in escrow
+    function updateAccountRewards(
+        address account,
+        uint256 effectiveSupplyBefore,
+        uint256 accountSharesBefore,
+        uint256 accountSharesAfter,
+        bool sharesInEscrow
+    ) external returns (uint256[] memory rewards);
+
+    /// @notice Sets a secondary reward rate for a given token, only callable via the owner
+    /// @param index Index of the reward token
+    /// @param rewardToken Address of the reward token
+    /// @param emissionRatePerYear Emission rate per year for the token
+    /// @param endTime End time for the emission rate
+    function updateRewardToken(
+        uint256 index,
+        address rewardToken,
+        uint128 emissionRatePerYear,
+        uint32 endTime
+    ) external;
+
+    /// @notice Migrates the reward pool to a new reward pool, needs to be called initially
+    /// to set the reward pool storage and when the reward pool is updated.
+    /// @param poolToken The pool token to migrate
+    /// @param newRewardPool The new reward pool storage configuration
+    function migrateRewardPool(address poolToken, RewardPoolStorage memory newRewardPool) external;
+
+    /// @notice Claims all the rewards for the entire vault and updates the accumulators
+    function claimRewardTokens() external;
+}</code></pre></section>
+<section id="MorphoLendingRouter.sol"><h2>MorphoLendingRouter.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {ILendingRouter} from &quot;../interfaces/ILendingRouter.sol&quot;;
+import {InsufficientAssetsForRepayment} from &quot;../interfaces/Errors.sol&quot;;
+import {ERC20} from &quot;@openzeppelin/contracts/token/ERC20/ERC20.sol&quot;;
+import {TokenUtils} from &quot;../utils/TokenUtils.sol&quot;;
+import {SafeERC20} from &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import {IYieldStrategy} from &quot;../interfaces/IYieldStrategy.sol&quot;;
+import {IMorphoLiquidateCallback, IMorphoFlashLoanCallback, IMorphoRepayCallback} from &quot;../interfaces/Morpho/IMorphoCallbacks.sol&quot;;
+import {ADDRESS_REGISTRY} from &quot;../utils/Constants.sol&quot;;
+import {AbstractLendingRouter} from &quot;./AbstractLendingRouter.sol&quot;;
+import {
+    MORPHO,
+    MarketParams,
+    Id,
+    Position,
+    Market,
+    Withdrawal,
+    PUBLIC_ALLOCATOR
+} from &quot;../interfaces/Morpho/IMorpho.sol&quot;;
+
+struct MorphoParams {
+    address irm;
+    uint256 lltv;
+}
+
+struct MorphoAllocation {
+    address vault;
+    uint256 feeAmount;
+    Withdrawal[] withdrawals;
+}
+
+contract MorphoLendingRouter is AbstractLendingRouter, IMorphoLiquidateCallback, IMorphoFlashLoanCallback, IMorphoRepayCallback {
+    using SafeERC20 for ERC20;
+    using TokenUtils for ERC20;
+
+    mapping(address vault =&gt; MorphoParams params) private s_morphoParams;
+
+    function initializeMarket(address vault, address irm, uint256 lltv) external {
+        require(ADDRESS_REGISTRY.upgradeAdmin() == msg.sender);
+        // Cannot override parameters once they are set
+        require(s_morphoParams[vault].irm == address(0));
+        require(s_morphoParams[vault].lltv == 0);
+
+        s_morphoParams[vault] = MorphoParams({
+            irm: irm,
+            lltv: lltv
+        });
+
+        MORPHO.createMarket(marketParams(vault));
+    }
+
+    function marketParams(address vault) public view returns (MarketParams memory) {
+        return marketParams(vault, IYieldStrategy(vault).asset());
+    }
+
+    function marketParams(address vault, address asset) internal view returns (MarketParams memory) {
+        MorphoParams memory params = s_morphoParams[vault];
+
+        return MarketParams({
+            loanToken: asset,
+            collateralToken: vault,
+            oracle: vault,
+            irm: params.irm,
+            lltv: params.lltv
+        });
+    }
+
+    function morphoId(MarketParams memory m) internal pure returns (Id) {
+        return Id.wrap(keccak256(abi.encode(m)));
+    }
+
+    /// @dev Allows integration with the public allocator so that accounts can
+    /// ensure there is sufficient liquidity in the lending market before entering
+    function _allocate(address vault, MorphoAllocation[] calldata allocationData) internal {
+        MarketParams memory m = marketParams(vault);
+
+        uint256 totalFeeAmount;
+        for (uint256 i = 0; i &lt; allocationData.length; i++) {
+            PUBLIC_ALLOCATOR.reallocateTo{value: allocationData[i].feeAmount}(
+                allocationData[i].vault, allocationData[i].withdrawals, m
+            );
+            totalFeeAmount += allocationData[i].feeAmount;
+        }
+        require(msg.value == totalFeeAmount, &quot;Insufficient fee amount&quot;);
+    }
+
+    function allocateAndEnterPosition(
+        address onBehalf,
+        address vault,
+        uint256 depositAssetAmount,
+        uint256 borrowAmount,
+        bytes calldata depositData,
+        MorphoAllocation[] calldata allocationData
+    ) external payable isAuthorized(onBehalf, vault) {
+        _allocate(vault, allocationData);
+        enterPosition(onBehalf, vault, depositAssetAmount, borrowAmount, depositData);
+    }
+
+    function allocateAndMigratePosition(
+        address onBehalf,
+        address vault,
+        address migrateFrom,
+        MorphoAllocation[] calldata allocationData
+    ) external payable isAuthorized(onBehalf, vault) {
+        _allocate(vault, allocationData);
+        migratePosition(onBehalf, vault, migrateFrom);
+    }
+
+    function _flashBorrowAndEnter(
+        address onBehalf,
+        address vault,
+        address asset,
+        uint256 depositAssetAmount,
+        uint256 borrowAmount,
+        bytes memory depositData,
+        address migrateFrom
+    ) internal override {
+        // At this point we will flash borrow funds from the lending market and then
+        // receive control in a different function on a callback.
+        bytes memory flashLoanData = abi.encode(
+            onBehalf, vault, asset, depositAssetAmount, depositData, migrateFrom
+        );
+        MORPHO.flashLoan(asset, borrowAmount, flashLoanData);
+    }
+
+    function onMorphoFlashLoan(uint256 assets, bytes calldata data) external override {
+        require(msg.sender == address(MORPHO));
+
+        (
+            address onBehalf,
+            address vault,
+            address asset,
+            uint256 depositAssetAmount,
+            bytes memory depositData,
+            address migrateFrom
+        ) = abi.decode(data, (address, address, address, uint256, bytes, address));
+
+        _enterOrMigrate(onBehalf, vault, asset, assets + depositAssetAmount, depositData, migrateFrom);
+
+        MarketParams memory m = marketParams(vault, asset);
+        // Borrow the assets in order to repay the flash loan
+        MORPHO.borrow(m, assets, 0, onBehalf, address(this));
+
+        // Allow for flash loan to be repaid
+        ERC20(asset).checkApprove(address(MORPHO), assets);
+    }
+
+    function _supplyCollateral(
+        address onBehalf,
+        address vault,
+        address asset,
+        uint256 sharesReceived
+    ) internal override {
+        MarketParams memory m = marketParams(vault, asset);
+
+        // Allows the transfer from the lending market to the Morpho contract
+        IYieldStrategy(vault).allowTransfer(address(MORPHO), sharesReceived, onBehalf);
+
+        // We should receive shares in return
+        ERC20(vault).approve(address(MORPHO), sharesReceived);
+        MORPHO.supplyCollateral(m, sharesReceived, onBehalf, &quot;&quot;);
+    }
+
+    function _withdrawCollateral(
+        address vault,
+        address asset,
+        uint256 sharesToRedeem,
+        address sharesOwner,
+        address receiver
+    ) internal override {
+        MarketParams memory m = marketParams(vault, asset);
+        MORPHO.withdrawCollateral(m, sharesToRedeem, sharesOwner, receiver);
+    }
+
+    function _exitWithRepay(
+        address onBehalf,
+        address vault,
+        address asset,
+        address receiver,
+        uint256 sharesToRedeem,
+        uint256 assetToRepay,
+        bytes calldata redeemData
+    ) internal override {
+        MarketParams memory m = marketParams(vault, asset);
+
+        uint256 sharesToRepay;
+        if (assetToRepay == type(uint256).max) {
+            // If assetToRepay is uint256.max then get the morpho borrow shares amount to
+            // get a full exit.
+            sharesToRepay = MORPHO.position(morphoId(m), onBehalf).borrowShares;
+            assetToRepay = 0;
+        }
+
+        bytes memory repayData = abi.encode(
+            onBehalf, vault, asset, receiver, sharesToRedeem, redeemData, _isMigrate(receiver)
+        );
+
+        // Will trigger a callback to onMorphoRepay
+        MORPHO.repay(m, assetToRepay, sharesToRepay, onBehalf, repayData);
+    }
+
+    function onMorphoRepay(uint256 assetToRepay, bytes calldata data) external override {
+        require(msg.sender == address(MORPHO));
+
+        (
+            address sharesOwner,
+            address vault,
+            address asset,
+            address receiver,
+            uint256 sharesToRedeem,
+            bytes memory redeemData,
+            bool isMigrate
+        ) = abi.decode(data, (address, address, address, address, uint256, bytes, bool));
+
+        uint256 assetsWithdrawn = _redeemShares(
+            sharesOwner, vault, asset, isMigrate ? receiver : address(0), sharesToRedeem, redeemData
+        );
+
+        if (isMigrate) {
+            // When migrating we do not withdraw any assets and we must repay the entire debt
+            // from the previous lending router.
+            ERC20(asset).safeTransferFrom(receiver, address(this), assetToRepay);
+            assetsWithdrawn = assetToRepay;
+        }
+
+        // Transfer any profits to the receiver
+        if (assetsWithdrawn &lt; assetToRepay) {
+            // We have to revert in this case because we&#x27;ve already redeemed the yield tokens
+            revert InsufficientAssetsForRepayment(assetToRepay, assetsWithdrawn);
+        }
+
+        uint256 profitsWithdrawn;
+        unchecked {
+            profitsWithdrawn = assetsWithdrawn - assetToRepay;
+        }
+        ERC20(asset).safeTransfer(receiver, profitsWithdrawn);
+
+        // Allow morpho to repay the debt
+        ERC20(asset).checkApprove(address(MORPHO), assetToRepay);
+    }
+
+    function _liquidate(
+        address liquidator,
+        address vault,
+        address liquidateAccount,
+        uint256 sharesToLiquidate,
+        uint256 debtToRepay
+    ) internal override returns (uint256 sharesToLiquidator) {
+        MarketParams memory m = marketParams(vault);
+        (sharesToLiquidator, /* */) = MORPHO.liquidate(
+            m, liquidateAccount, sharesToLiquidate, debtToRepay, abi.encode(m.loanToken, liquidator)
+        );
+    }
+
+    function onMorphoLiquidate(uint256 repaidAssets, bytes calldata data) external override {
+        require(msg.sender == address(MORPHO));
+        (address asset, address liquidator) = abi.decode(data, (address, address));
+
+        ERC20(asset).safeTransferFrom(liquidator, address(this), repaidAssets);
+        ERC20(asset).checkApprove(address(MORPHO), repaidAssets);
+    }
+
+    function balanceOfCollateral(address account, address vault) public view override returns (uint256 collateralBalance) {
+        MarketParams memory m = marketParams(vault);
+        collateralBalance = MORPHO.position(morphoId(m), account).collateral;
+    }
+
+    function healthFactor(address borrower, address vault) public override returns (uint256 borrowed, uint256 collateralValue, uint256 maxBorrow) {
+        MarketParams memory m = marketParams(vault);
+        Id id = morphoId(m);
+        // Ensure interest is accrued before calculating health factor
+        MORPHO.accrueInterest(m);
+        Position memory position = MORPHO.position(id, borrower);
+        Market memory market = MORPHO.market(id);
+
+        if (position.borrowShares &gt; 0) {
+            borrowed = (uint256(position.borrowShares) * uint256(market.totalBorrowAssets)) / uint256(market.totalBorrowShares);
+        } else {
+            borrowed = 0;
+        }
+        collateralValue = (uint256(position.collateral) * IYieldStrategy(vault).price(borrower)) / 1e36;
+        maxBorrow = collateralValue * m.lltv / 1e18;
+    }
+
+}
+</code></pre></section>
+<section id="RewardManagerMixin.sol"><h2>RewardManagerMixin.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity &gt;=0.8.29;
+
+import {IRewardManager} from &quot;../interfaces/IRewardManager.sol&quot;;
+import {AbstractYieldStrategy} from &quot;../AbstractYieldStrategy.sol&quot;;
+import {ILendingRouter} from &quot;../interfaces/ILendingRouter.sol&quot;;
+import {ADDRESS_REGISTRY} from &quot;../utils/Constants.sol&quot;;
+import {CannotLiquidateZeroShares} from &quot;../interfaces/Errors.sol&quot;;
+
+abstract contract RewardManagerMixin is AbstractYieldStrategy {
+    IRewardManager public immutable REWARD_MANAGER;
+
+    uint256 internal transient t_Liquidator_SharesBefore;
+    uint256 internal transient t_LiquidateAccount_SharesBefore;
+
+    constructor(
+        address _asset,
+        address _yieldToken,
+        uint256 _feeRate,
+        address _rewardManager,
+        uint8 _yieldTokenDecimals
+    ) AbstractYieldStrategy(_asset, _yieldToken, _feeRate, _yieldTokenDecimals) {
+        REWARD_MANAGER = IRewardManager(_rewardManager);
+    }
+
+    function _preLiquidation(
+        address /* liquidateAccount */,
+        address liquidator,
+        uint256 /* sharesToLiquidate */,
+        uint256 accountSharesHeld
+    ) internal override virtual {
+        // This only works because the liquidator is prevented from having a position on the lending router so any
+        // balance will be a native token balance.
+        t_Liquidator_SharesBefore = balanceOf(liquidator);
+        t_LiquidateAccount_SharesBefore = accountSharesHeld;
+    }
+
+    function __postLiquidation(
+        address liquidator,
+        address liquidateAccount,
+        uint256 sharesToLiquidator
+    ) internal virtual returns (bool didTokenize);
+
+    function _postLiquidation(
+        address liquidator,
+        address liquidateAccount,
+        uint256 sharesToLiquidator
+    ) internal override returns (bool didTokenize) {
+        // Total supply does not change during liquidation
+        uint256 effectiveSupplyBefore = effectiveSupply();
+        if (sharesToLiquidator == 0) revert CannotLiquidateZeroShares();
+
+        didTokenize = __postLiquidation(liquidator, liquidateAccount, sharesToLiquidator);
+
+        _updateAccountRewards({
+            account: liquidator,
+            accountSharesBefore: t_Liquidator_SharesBefore,
+            accountSharesAfter: t_Liquidator_SharesBefore + sharesToLiquidator,
+            effectiveSupplyBefore: effectiveSupplyBefore,
+            sharesInEscrow: didTokenize
+        });
+
+        _updateAccountRewards({
+            account: liquidateAccount,
+            accountSharesBefore: t_LiquidateAccount_SharesBefore,
+            accountSharesAfter: t_LiquidateAccount_SharesBefore - sharesToLiquidator,
+            effectiveSupplyBefore: effectiveSupplyBefore,
+            sharesInEscrow: didTokenize
+        });
+    }
+
+    function _mintSharesGivenAssets(
+        uint256 assets,
+        bytes memory depositData,
+        address receiver
+    ) internal override returns (uint256 sharesMinted) {
+        uint256 effectiveSupplyBefore = effectiveSupply();
+        uint256 initialVaultShares = ILendingRouter(t_CurrentLendingRouter).balanceOfCollateral(receiver, address(this));
+        sharesMinted = super._mintSharesGivenAssets(assets, depositData, receiver);
+        _updateAccountRewards({
+            account: receiver,
+            accountSharesBefore: initialVaultShares,
+            accountSharesAfter: initialVaultShares + sharesMinted,
+            effectiveSupplyBefore: effectiveSupplyBefore,
+            // Shares cannot be in escrow during minting
+            sharesInEscrow: false
+        });
+    }
+
+    function _burnShares(
+        uint256 sharesToBurn,
+        uint256 sharesHeld,
+        bytes memory redeemData,
+        address sharesOwner
+    ) internal override returns (uint256 assetsWithdrawn) {
+        uint256 effectiveSupplyBefore = effectiveSupply();
+        // Get the escrow state before burning the shares since it will be cleared if
+        // the entire balance is burned.
+        bool wasEscrowed = _isWithdrawRequestPending(sharesOwner);
+
+        assetsWithdrawn = super._burnShares(sharesToBurn, sharesHeld, redeemData, sharesOwner);
+
+        _updateAccountRewards({
+            account: sharesOwner,
+            accountSharesBefore: sharesHeld,
+            // If shares after is zero then the escrow state will be cleared
+            accountSharesAfter: sharesHeld - sharesToBurn,
+            effectiveSupplyBefore: effectiveSupplyBefore,
+            sharesInEscrow: wasEscrowed
+        });
+    }
+
+    function __initiateWithdraw(
+        address account,
+        uint256 yieldTokenAmount,
+        uint256 sharesHeld,
+        bytes memory data
+    ) internal virtual returns (uint256 requestId);
+    
+    /// @dev Ensures that the account no longer accrues rewards after a withdraw request is initiated.
+    function _initiateWithdraw(
+        address account,
+        uint256 yieldTokenAmount,
+        uint256 sharesHeld,
+        bytes memory data
+    ) internal override returns (uint256 requestId) {
+        uint256 effectiveSupplyBefore = effectiveSupply();
+
+        // Claim all rewards before initiating a withdraw shares not considered 
+        // in the escrow state at this point.
+        _updateAccountRewards({
+            account: account,
+            accountSharesBefore: sharesHeld,
+            accountSharesAfter: sharesHeld,
+            effectiveSupplyBefore: effectiveSupplyBefore,
+            sharesInEscrow: false
+        });
+
+        requestId = __initiateWithdraw(account, yieldTokenAmount, sharesHeld, data);
+    }
+
+    function _updateAccountRewards(
+        address account,
+        uint256 effectiveSupplyBefore,
+        uint256 accountSharesBefore,
+        uint256 accountSharesAfter,
+        bool sharesInEscrow
+    ) internal returns (bytes memory) {
+        return _delegateCall(address(REWARD_MANAGER), abi.encodeWithSelector(
+            IRewardManager.updateAccountRewards.selector,
+            account, effectiveSupplyBefore, accountSharesBefore, accountSharesAfter, sharesInEscrow
+        ));
+    }
+
+    function claimAccountRewards(
+        address account,
+        uint256 sharesHeld
+    ) external nonReentrant returns (uint256[] memory rewards) {
+        uint256 effectiveSupplyBefore = effectiveSupply();
+        if (!ADDRESS_REGISTRY.isLendingRouter(msg.sender)) {
+            // If the caller is not a lending router we get the shares held in a
+            // native token account.
+            sharesHeld = balanceOf(account);
+        }
+        // Short circuit if the account has no shares or a withdraw request is pending
+        if (sharesHeld == 0 || _isWithdrawRequestPending(account)) return rewards;
+
+        bytes memory result = _updateAccountRewards({
+            account: account,
+            accountSharesBefore: sharesHeld,
+            accountSharesAfter: sharesHeld,
+            effectiveSupplyBefore: effectiveSupplyBefore,
+            sharesInEscrow: false
+        });
+
+        rewards = abi.decode(result, (uint256[]));
+    }
+
+    fallback() external {
+        address target = address(REWARD_MANAGER);
+        // Cannot call updateAccountRewards unless it&#x27;s through the internal methods
+        require(msg.sig != IRewardManager.updateAccountRewards.selector);
+        bytes memory result = _delegateCall(target, msg.data);
+
+        assembly {
+            // Copy the result to memory
+            let resultSize := mload(result)
+            // Copy the result data (skipping the length prefix)
+            let resultData := add(result, 0x20)
+            // Copy to the return data area
+            return(resultData, resultSize)
+        }
+    }
+}
+</code></pre></section>
+<section id="UniV3Adapter.sol"><h2>UniV3Adapter.sol</h2><pre><code>// SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {Deployments} from &quot;@deployments/Deployments.sol&quot;;
+import {TradeHandler} from &quot;../TradeHandler.sol&quot;;
+import &quot;@interfaces/trading/ITradingModule.sol&quot;;
+import &quot;@interfaces/uniswap/v3/ISwapRouter.sol&quot;;
+
+library UniV3Adapter {
+
+    struct UniV3SingleData { uint24 fee; }
+
+    // Path is packed encoding `token, fee, token, fee, outToken`
+    struct UniV3BatchData { bytes path; }
+
+    function _toAddress(bytes memory _bytes, uint256 _start) private pure returns (address) {
+        // _bytes.length checked by the caller
+        address tempAddress;
+
+        assembly {
+            tempAddress := div(
+                mload(add(add(_bytes, 0x20), _start)),
+                0x1000000000000000000000000
+            )
+        }
+
+        return tempAddress;
+    }
+
+    function _getTokenAddress(address token) internal pure returns (address) {
+        return token == Deployments.ETH_ADDRESS ? address(Deployments.WETH) : token;
+    }
+
+    function _exactInSingle(address from, Trade memory trade)
+        private pure returns (bytes memory)
+    {
+        UniV3SingleData memory data = abi.decode(trade.exchangeData, (UniV3SingleData));
+
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams(
+            _getTokenAddress(trade.sellToken), 
+            _getTokenAddress(trade.buyToken), 
+            data.fee, from, trade.deadline, trade.amount, trade.limit, 0 // sqrtPriceLimitX96
+        );
+
+        return abi.encodeWithSelector(ISwapRouter.exactInputSingle.selector, params);
+    }
+
+    function _exactOutSingle(address from, Trade memory trade) private pure returns (bytes memory) {
+        UniV3SingleData memory data = abi.decode(trade.exchangeData, (UniV3SingleData));
+
+        ISwapRouter.ExactOutputSingleParams memory params = ISwapRouter.ExactOutputSingleParams(
+            _getTokenAddress(trade.sellToken), 
+            _getTokenAddress(trade.buyToken), 
+            data.fee, from, trade.deadline, trade.amount, trade.limit, 0 // sqrtPriceLimitX96
+        );
+
+        return abi.encodeWithSelector(ISwapRouter.exactOutputSingle.selector, params);
+    }
+
+    function _exactInBatch(address from, Trade memory trade) private pure returns (bytes memory) {
+        UniV3BatchData memory data = abi.decode(trade.exchangeData, (UniV3BatchData));
+
+        // Validate path EXACT_IN = [sellToken, fee, ... buyToken]
+        require(32 &lt;= data.path.length);
+        require(_toAddress(data.path, 0) == _getTokenAddress(trade.sellToken));
+        require(_toAddress(data.path, data.path.length - 20) == _getTokenAddress(trade.buyToken));
+
+        ISwapRouter.ExactInputParams memory params = ISwapRouter.ExactInputParams(
+            data.path, from, trade.deadline, trade.amount, trade.limit
+        );
+
+        return abi.encodeWithSelector(ISwapRouter.exactInput.selector, params);
+    }
+
+    function _exactOutBatch(address from, Trade memory trade) private pure returns (bytes memory) {
+        UniV3BatchData memory data = abi.decode(trade.exchangeData, (UniV3BatchData));
+
+        // Validate path EXACT_OUT = [buyToken, fee, ... sellToken]
+        require(32 &lt;= data.path.length);
+        require(_toAddress(data.path, 0) == _getTokenAddress(trade.buyToken));
+        require(_toAddress(data.path, data.path.length - 20) == _getTokenAddress(trade.sellToken));
+
+        ISwapRouter.ExactOutputParams memory params = ISwapRouter.ExactOutputParams(
+            data.path, from, trade.deadline, trade.amount, trade.limit
+        );
+
+        return abi.encodeWithSelector(ISwapRouter.exactOutput.selector, params);
+    }
+
+    function getExecutionData(address from, Trade memory trade)
+        internal pure returns (
+            address spender,
+            address target,
+            uint256 msgValue,
+            bytes memory executionCallData
+        )
+    {
+        spender = address(Deployments.UNIV3_ROUTER);
+        target = address(Deployments.UNIV3_ROUTER);
+        // msgValue is always zero for uniswap
+        msgValue = 0;
+
+        if (trade.tradeType == TradeType.EXACT_IN_SINGLE) {
+            executionCallData = _exactInSingle(from, trade);
+        } else if (trade.tradeType == TradeType.EXACT_OUT_SINGLE) {
+            executionCallData = _exactOutSingle(from, trade);
+        } else if (trade.tradeType == TradeType.EXACT_IN_BATCH) {
+            executionCallData = _exactInBatch(from, trade);
+        } else if (trade.tradeType == TradeType.EXACT_OUT_BATCH) {
+            executionCallData = _exactOutBatch(from, trade);
+        }
+    }
+}</code></pre></section>
+<footer><p>Ground-truth findings for this eval are intentionally not published.</p></footer>
+</body>
+</html>

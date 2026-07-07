@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vfp_00078 — audited contracts</title>
+<style>
+  :root { --bg:#fff; --text:#1a1a2e; --muted:#667; --surface:#f6f7f9; --border:#dde; --accent:#4a6cf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1117; --text:#e6e6ef; --muted:#99a; --surface:#181b24; --border:#2a2e3d; --accent:#7a95ff; }
+  }
+  body { margin:0 auto; max-width:1100px; padding:2rem 1.5rem; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+  h1 { font-size:1.4rem; margin:0 0 0.25rem; }
+  h2 { font-size:1rem; margin:2rem 0 0.5rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .meta, footer { color:var(--muted); font-size:0.9rem; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  nav { margin:1rem 0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85rem; }
+  nav a { margin-right:1rem; }
+  pre { background:var(--surface); border:1px solid var(--border); border-radius:8px;
+        padding:1rem; overflow-x:auto; font-size:0.8rem; line-height:1.45; }
+</style>
+</head>
+<body>
+<p><a href="../index.html">&larr; leaderboard</a></p>
+<h1>vfp_00078</h1>
+<p class="meta">Virtuals Protocol Staking - Zenith Audit Report.pdf &middot; 1 contract file &middot; the exact sources given to every
+auditor run of this eval in the Solidity Skill Benchmark.</p>
+<nav><a href="#veVirtual.sol">veVirtual.sol</a></nav>
+<section id="veVirtual.sol"><h2>veVirtual.sol</h2><pre><code>// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import &quot;@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol&quot;;
+import &quot;@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol&quot;;
+import &quot;@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol&quot;;
+import &quot;@openzeppelin/contracts/token/ERC20/IERC20.sol&quot;;
+import &quot;@openzeppelin/contracts/utils/structs/Checkpoints.sol&quot;;
+import &quot;@openzeppelin/contracts-upgradeable/governance/utils/VotesUpgradeable.sol&quot;;
+
+contract veVirtual is
+    Initializable,
+    ReentrancyGuardUpgradeable,
+    AccessControlUpgradeable,
+    VotesUpgradeable
+{
+    using SafeERC20 for IERC20;
+    struct Lock {
+        uint256 amount;
+        uint256 start;
+        uint256 end;
+        uint8 numWeeks; // Active duration in weeks. Reset to maxWeeks if autoRenew is true.
+        uint256 value;
+        bool autoRenew;
+    }
+
+    uint16 public constant DENOM = 10000;
+
+    bytes32 public constant ADMIN_ROLE = keccak256(&quot;ADMIN_ROLE&quot;);
+
+    address public baseToken;
+    mapping(address =&gt; Lock[]) public locks;
+
+    uint8 public maxWeeks;
+
+    event Stake(address indexed user, uint256 amount, uint8 numWeeks);
+    event Withdraw(address indexed user, uint256 index, uint256 amount);
+
+    bool public adminUnlocked;
+
+    event AdminUnlocked(bool adminUnlocked);
+
+    function initialize(
+        address baseToken_,
+        uint8 maxWeeks_
+    ) external initializer {
+        __ReentrancyGuard_init();
+        __AccessControl_init();
+        __Votes_init();
+
+        require(baseToken_ != address(0), &quot;Invalid token&quot;);
+        baseToken = baseToken_;
+        maxWeeks = maxWeeks_;
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        _grantRole(ADMIN_ROLE, _msgSender());
+    }
+
+    function numPositions(address account) public view returns (uint256) {
+        return locks[account].length;
+    }
+
+    function getPositions(
+        address account,
+        uint256 start,
+        uint256 count
+    ) public view returns (Lock[] memory) {
+        Lock[] memory results = new Lock[](count);
+        uint j = 0;
+        for (
+            uint i = start;
+            i &lt; (start + count) &amp;&amp; i &lt; locks[account].length;
+            i++
+        ) {
+            results[j] = locks[account][i];
+            j++;
+        }
+        return results;
+    }
+
+    // Query balance at a specific timestamp
+    // If the timestamp is before the lock was created, it will return 0
+    // This does not work on withdrawn locks
+    function balanceOfAt(
+        address account,
+        uint256 timestamp
+    ) public view returns (uint256) {
+        uint256 balance = 0;
+        for (uint i = 0; i &lt; locks[account].length; i++) {
+            balance += _balanceOfLockAt(locks[account][i], timestamp);
+        }
+        return balance;
+    }
+
+    function balanceOf(address account) public view returns (uint256) {
+        return balanceOfAt(account, block.timestamp);
+    }
+
+    function balanceOfLock(
+        address account,
+        uint256 index
+    ) public view returns (uint256) {
+        return _balanceOfLock(locks[account][index]);
+    }
+
+    function _balanceOfLockAt(
+        Lock memory lock,
+        uint256 timestamp
+    ) internal pure returns (uint256) {
+        uint256 value = lock.value;
+        if (lock.autoRenew) {
+            return value;
+        }
+
+        if (timestamp &lt; lock.start || timestamp &gt;= lock.end) {
+            return 0;
+        }
+
+        uint256 duration = lock.end - lock.start;
+        uint256 elapsed = timestamp - lock.start;
+        uint256 decayRate = (value * DENOM) / duration;
+
+        return value - (elapsed * decayRate) / DENOM;
+    }
+
+    function _balanceOfLock(Lock memory lock) internal view returns (uint256) {
+        return _balanceOfLockAt(lock, block.timestamp);
+    }
+
+    function stake(
+        uint256 amount,
+        uint8 numWeeks,
+        bool autoRenew
+    ) external nonReentrant {
+        require(amount &gt; 0, &quot;Amount must be greater than 0&quot;);
+        require(numWeeks &lt;= maxWeeks, &quot;Num weeks must be less than max weeks&quot;);
+
+        IERC20(baseToken).safeTransferFrom(_msgSender(), address(this), amount);
+
+        if (autoRenew == true) {
+            numWeeks = maxWeeks;
+        }
+
+        uint multiplier = (uint(numWeeks) * DENOM) / uint(maxWeeks);
+        uint256 value = (amount * multiplier) / DENOM;
+
+        uint256 end = block.timestamp + uint256(numWeeks) * 1 weeks;
+
+        Lock memory lock = Lock({
+            amount: amount,
+            start: block.timestamp,
+            end: end,
+            numWeeks: numWeeks,
+            value: value,
+            autoRenew: autoRenew
+        });
+        locks[_msgSender()].push(lock);
+        emit Stake(_msgSender(), amount, numWeeks);
+        _transferVotingUnits(address(0), _msgSender(), amount);
+    }
+
+    function withdraw(uint256 index) external nonReentrant {
+        require(index &lt; locks[_msgSender()].length, &quot;Invalid index&quot;);
+        Lock memory lock = locks[_msgSender()][index];
+        require(
+            block.timestamp &gt;= lock.end || adminUnlocked,
+            &quot;Lock is not expired&quot;
+        );
+
+        uint256 amount = lock.amount;
+
+        uint256 lastIndex = locks[_msgSender()].length - 1;
+        if (index != lastIndex) {
+            locks[_msgSender()][index] = locks[_msgSender()][lastIndex];
+        }
+        delete locks[_msgSender()][lastIndex];
+
+        IERC20(baseToken).safeTransfer(_msgSender(), amount);
+        emit Withdraw(_msgSender(), index, amount);
+        _transferVotingUnits(_msgSender(), address(0), amount);
+    }
+
+    function toggleAutoRenew(uint256 index) external nonReentrant {
+        require(index &lt; locks[_msgSender()].length, &quot;Invalid index&quot;);
+        Lock storage lock = locks[_msgSender()][index];
+        require(block.timestamp &lt; lock.end, &quot;Lock is expired&quot;);
+        lock.autoRenew = !lock.autoRenew;
+
+        if (lock.autoRenew) {
+            lock.numWeeks = maxWeeks;
+        }
+
+        lock.start = block.timestamp;
+        lock.end = block.timestamp + uint(lock.numWeeks) * 1 weeks;
+        uint multiplier = (uint(lock.numWeeks) * DENOM) / uint(maxWeeks);
+        lock.value = (lock.amount * multiplier) / DENOM;
+    }
+
+    function extend(uint256 index, uint8 numWeeks) external nonReentrant {
+        require(index &lt; locks[_msgSender()].length, &quot;Invalid index&quot;);
+        Lock storage lock = locks[_msgSender()][index];
+        require(lock.autoRenew == false, &quot;Lock is auto-renewing&quot;);
+        require(block.timestamp &lt; lock.end, &quot;Lock is expired&quot;);
+        require(
+            (lock.numWeeks + numWeeks) &lt;= maxWeeks,
+            &quot;Num weeks must be less than max weeks&quot;
+        );
+        uint256 newEnd = lock.end + uint256(numWeeks) * 1 weeks;
+
+        lock.numWeeks += numWeeks;
+        lock.end = newEnd;
+        uint multiplier = ((uint(newEnd) - lock.start) * DENOM) /
+            (uint(maxWeeks) * 1 weeks);
+        lock.value = (lock.amount * multiplier) / DENOM;
+    }
+
+    function setMaxWeeks(uint8 maxWeeks_) external onlyRole(ADMIN_ROLE) {
+        maxWeeks = maxWeeks_;
+    }
+
+    function getMaturity(
+        address account,
+        uint256 index
+    ) public view returns (uint256) {
+        Lock memory lock = locks[account][index];
+        if (!lock.autoRenew) {
+            return locks[account][index].end;
+        }
+
+        return block.timestamp + maxWeeks * 1 weeks;
+    }
+
+    function name() public pure returns (string memory) {
+        return &quot;veVIRTUAL&quot;;
+    }
+
+    function symbol() public pure returns (string memory) {
+        return &quot;veVIRTUAL&quot;;
+    }
+
+    function decimals() public pure returns (uint8) {
+        return 18;
+    }
+
+    function setAdminUnlocked(
+        bool adminUnlocked_
+    ) external onlyRole(ADMIN_ROLE) {
+        adminUnlocked = adminUnlocked_;
+        emit AdminUnlocked(adminUnlocked);
+    }
+
+    function _getVotingUnits(
+        address account
+    ) internal view virtual override returns (uint256) {
+        return stakedAmountOf(account);
+    }
+
+    function stakedAmountOf(address account) public view returns (uint256) {
+        uint256 amount = 0;
+        for (uint i = 0; i &lt; locks[account].length; i++) {
+            amount += locks[account][i].amount;
+        }
+        return amount;
+    }
+}
+</code></pre></section>
+<footer><p>Ground-truth findings for this eval are intentionally not published.</p></footer>
+</body>
+</html>

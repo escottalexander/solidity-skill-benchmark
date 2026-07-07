@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vfp_00021 — audited contracts</title>
+<style>
+  :root { --bg:#fff; --text:#1a1a2e; --muted:#667; --surface:#f6f7f9; --border:#dde; --accent:#4a6cf7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1117; --text:#e6e6ef; --muted:#99a; --surface:#181b24; --border:#2a2e3d; --accent:#7a95ff; }
+  }
+  body { margin:0 auto; max-width:1100px; padding:2rem 1.5rem; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+  h1 { font-size:1.4rem; margin:0 0 0.25rem; }
+  h2 { font-size:1rem; margin:2rem 0 0.5rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .meta, footer { color:var(--muted); font-size:0.9rem; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  nav { margin:1rem 0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85rem; }
+  nav a { margin-right:1rem; }
+  pre { background:var(--surface); border:1px solid var(--border); border-radius:8px;
+        padding:1rem; overflow-x:auto; font-size:0.8rem; line-height:1.45; }
+</style>
+</head>
+<body>
+<p><a href="../index.html">&larr; leaderboard</a></p>
+<h1>vfp_00021</h1>
+<p class="meta">cantina_centrifuge_may2025.pdf &middot; 2 contract files &middot; the exact sources given to every
+auditor run of this eval in the Solidity Skill Benchmark.</p>
+<nav><a href="#AxelarAdapter.sol">AxelarAdapter.sol</a><a href="#CastLib.sol">CastLib.sol</a></nav>
+<section id="AxelarAdapter.sol"><h2>AxelarAdapter.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {Auth} from &quot;src/misc/Auth.sol&quot;;
+import {CastLib} from &quot;src/misc/libraries/CastLib.sol&quot;;
+import {
+    IAxelarAdapter,
+    IAdapter,
+    IAxelarGateway,
+    IAxelarGasService,
+    AxelarSource,
+    AxelarDestination,
+    IAxelarExecutable
+} from &quot;src/common/interfaces/IAxelarAdapter.sol&quot;;
+import {IMessageHandler} from &quot;src/common/interfaces/IMessageHandler.sol&quot;;
+
+/// @title  Axelar Adapter
+/// @notice Routing contract that integrates with an Axelar Gateway
+contract AxelarAdapter is Auth, IAxelarAdapter {
+    using CastLib for *;
+
+    IMessageHandler public immutable gateway;
+    IAxelarGateway public immutable axelarGateway;
+    IAxelarGasService public immutable axelarGasService;
+
+    mapping(string axelarId =&gt; AxelarSource) public sources;
+    mapping(uint16 centrifugeId =&gt; AxelarDestination) public destinations;
+
+    constructor(IMessageHandler gateway_, address axelarGateway_, address axelarGasService_, address deployer)
+        Auth(deployer)
+    {
+        gateway = gateway_;
+        axelarGateway = IAxelarGateway(axelarGateway_);
+        axelarGasService = IAxelarGasService(axelarGasService_);
+    }
+
+    //----------------------------------------------------------------------------------------------
+    // Administration
+    //----------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IAxelarAdapter
+    function file(bytes32 what, string calldata axelarId, uint16 centrifugeId, address source) external auth {
+        if (what == &quot;sources&quot;) sources[axelarId] = AxelarSource(centrifugeId, source);
+        else revert FileUnrecognizedParam();
+        emit File(what, axelarId, centrifugeId, source);
+    }
+
+    /// @inheritdoc IAxelarAdapter
+    function file(bytes32 what, uint16 centrifugeId, string calldata axelarId, address destination) external auth {
+        if (what == &quot;destinations&quot;) destinations[centrifugeId] = AxelarDestination(axelarId, destination);
+        else revert FileUnrecognizedParam();
+        emit File(what, centrifugeId, axelarId, destination);
+    }
+
+    //----------------------------------------------------------------------------------------------
+    // Incoming
+    //----------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IAxelarExecutable
+    function execute(
+        bytes32 commandId,
+        string calldata sourceAxelarId,
+        string calldata sourceAddress,
+        bytes calldata payload
+    ) public {
+        AxelarSource memory source = sources[sourceAxelarId];
+        require(source.addr != address(0) &amp;&amp; source.addr == sourceAddress.toAddress(), InvalidAddress());
+
+        require(
+            axelarGateway.validateContractCall(commandId, sourceAxelarId, sourceAddress, keccak256(payload)),
+            NotApprovedByGateway()
+        );
+
+        gateway.handle(source.centrifugeId, payload);
+    }
+
+    //----------------------------------------------------------------------------------------------
+    // Outgoing
+    //----------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IAdapter
+    function send(uint16 centrifugeId, bytes calldata payload, uint256, /* gasLimit */ address refund)
+        external
+        payable
+        returns (bytes32 adapterData)
+    {
+        require(msg.sender == address(gateway), NotGateway());
+        AxelarDestination memory destination = destinations[centrifugeId];
+        require(bytes(destination.axelarId).length != 0, UnknownChainId());
+
+        string memory destinationAddress = destination.addr.toString();
+        axelarGasService.payNativeGasForContractCall{value: msg.value}(
+            address(this), destination.axelarId, destinationAddress, payload, refund
+        );
+
+        axelarGateway.callContract(destination.axelarId, destinationAddress, payload);
+
+        adapterData = bytes32(&quot;&quot;);
+    }
+
+    /// @inheritdoc IAdapter
+    function estimate(uint16 centrifugeId, bytes calldata payload, uint256 gasLimit) public view returns (uint256) {
+        AxelarDestination memory destination = destinations[centrifugeId];
+        return axelarGasService.estimateGasFee(
+            destination.axelarId, destination.addr.toString(), payload, gasLimit, bytes(&quot;&quot;)
+        );
+    }
+}
+</code></pre></section>
+<section id="CastLib.sol"><h2>CastLib.sol</h2><pre><code>// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+/// @title  CastLib
+library CastLib {
+    function toAddressLeftPadded(bytes32 addr) internal pure returns (address) {
+        require(bytes12(addr) == 0, &quot;First 12 bytes should be zero&quot;);
+        return address(uint160(uint256(addr)));
+    }
+
+    function toBytes32LeftPadded(address addr) internal pure returns (bytes32) {
+        return bytes32(uint256(uint160(addr)));
+    }
+
+    function toAddress(string calldata addr) internal pure returns (address) {
+        require(bytes(addr).length == 20, &quot;Input should be 20 bytes&quot;);
+        return address(bytes20(bytes(addr)));
+    }
+
+    function toAddress(bytes32 addr) internal pure returns (address) {
+        require(uint96(uint256(addr)) == 0, &quot;Input should be 20 bytes&quot;);
+        return address(bytes20(addr));
+    }
+
+    function toString(address addr) internal pure returns (string memory) {
+        return string(abi.encodePacked(addr));
+    }
+
+    function toBytes32(address addr) internal pure returns (bytes32) {
+        return bytes32(bytes20(addr));
+    }
+
+    /// @dev Adds zero padding
+    function toBytes32(string memory source) internal pure returns (bytes32) {
+        return bytes32(bytes(source));
+    }
+
+    /// @dev Removes zero padding
+    function bytes128ToString(bytes memory _bytes128) internal pure returns (string memory) {
+        require(_bytes128.length == 128, &quot;Input should be 128 bytes&quot;);
+
+        uint8 i = 0;
+        while (i &lt; 128 &amp;&amp; _bytes128[i] != 0) {
+            i++;
+        }
+
+        bytes memory bytesArray = new bytes(i);
+
+        for (uint8 j; j &lt; i; j++) {
+            bytesArray[j] = _bytes128[j];
+        }
+
+        return string(bytesArray);
+    }
+
+    function toString(bytes32 _bytes32) internal pure returns (string memory) {
+        uint8 i = 0;
+        while (i &lt; 32 &amp;&amp; _bytes32[i] != 0) {
+            i++;
+        }
+        bytes memory bytesArray = new bytes(i);
+        for (i = 0; i &lt; 32 &amp;&amp; _bytes32[i] != 0; i++) {
+            bytesArray[i] = _bytes32[i];
+        }
+        return string(bytesArray);
+    }
+}
+</code></pre></section>
+<footer><p>Ground-truth findings for this eval are intentionally not published.</p></footer>
+</body>
+</html>
