@@ -240,17 +240,34 @@
             return;
         }
 
-        // Stats
-        const totalFindings = data.leaderboard.reduce((sum, s) =>
-            sum + s.per_eval.reduce((s2, e) => s2 + e.total, 0), 0);
-
         LB = data.leaderboard;
-        const top = data.leaderboard[0];
+
+        // Headline stat cards, computed from the board itself.
+        // 1) Which model gains the most from its best skill vs the no-skill baseline.
+        const byModel = {};
+        for (const e of data.leaderboard) (byModel[e.model] ||= []).push(e);
+        let lift = null;
+        for (const rows of Object.values(byModel)) {
+            const base = rows.find(r => r.is_baseline);
+            if (!base) continue;
+            for (const r of rows) {
+                if (r.is_baseline) continue;
+                const pts = r.recall.mean - base.recall.mean;
+                if (!lift || pts > lift.pts) lift = { r, pts };
+            }
+        }
+        // 2) Best catch rate and 3) cheapest tokens-per-finding, baseline rows included.
+        const best = data.leaderboard.reduce((a, b) => b.recall.mean > a.recall.mean ? b : a);
+        const cheap = data.leaderboard.filter(r => r.tokens_per_finding)
+            .reduce((a, b) => !a || b.tokens_per_finding < a.tokens_per_finding ? b : a, null);
+        const combo = (r) => `${r.is_baseline ? 'no skill (baseline)' : r.skill} on ${modelName(r)}`;
         document.getElementById('stats-row').innerHTML = `
-            <div class="stat-card"><div class="value">${data.total_skills}</div><div class="label">Rows (skills + baseline x models)</div></div>
-            <div class="stat-card"><div class="value">${top?.evals_run || 0}</div><div class="label">Evals (core_subset)</div></div>
-            <div class="stat-card"><div class="value">${pct(top?.recall?.mean || 0)}</div><div class="label">Top bug catch rate (${top?.skill || ''})</div></div>
-            <div class="stat-card"><div class="value">${pct(top?.precision?.mean || 0)}</div><div class="label">…at this precision</div></div>
+            <div class="stat-card"><div class="value">${lift ? '+' + (100 * lift.pts).toFixed(1) + ' pts' : '-'}</div>
+                <div class="label">Model most improved by a skill:<br>${lift ? `${modelName(lift.r)}, via ${lift.r.skill}` : '-'}</div></div>
+            <div class="stat-card"><div class="value">${pct(best.recall.mean)}</div>
+                <div class="label">Highest bug catch rate:<br>${combo(best)}</div></div>
+            <div class="stat-card"><div class="value">${cheap ? tokFmt(cheap.tokens_per_finding) : '-'}</div>
+                <div class="label">Fewest tokens per bug found:<br>${cheap ? combo(cheap) : '-'}</div></div>
         `;
 
         renderControls();

@@ -48,6 +48,22 @@ are from the **pre-overhaul corpus** (archived to
   bugs (pure run-to-run variance, §7); real static-analysis tools
   (Slither/Foundry) did not significantly help (§8).
 
+### Cross-board superlatives (3-model board, 2026-07-07 — also shown on the site)
+
+- **Model most improved by a skill: Sonnet 5**, +5.4 pts via
+  `ethskills/security` (23.2% vs 17.8% baseline) — the only lift that is
+  statistically significant (z=2.36, §13). Sonnet 4.6's best lift is +2.0 pts
+  (`ethskills/audit`) and Opus 4.8's just +0.6 pts (`ethskills/audit`), both
+  within noise.
+- **Highest bug catch rate: `ethskills/audit` on Opus 4.8** — 29.3%
+  [CI 21–41%] at 23.4% precision. (The no-skill Opus baseline is right behind
+  at 28.7%.)
+- **Fewest tokens per real finding: the no-skill baseline on Sonnet 4.6** —
+  181K tok/find. The cheapest skill combo is `ethskills/audit` on Sonnet 4.6
+  at 238K. Skills and stronger models both cost more per catch: the same
+  baseline runs 469K on Sonnet 5, and the heaviest combo
+  (`pashov-skills/solidity-auditor` on Sonnet 5) is 2.3M per catch (§9).
+
 ---
 
 ## 1. Exact benchmark configuration
