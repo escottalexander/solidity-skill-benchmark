@@ -4,10 +4,11 @@ A single reference for everything this benchmark has measured, with exact
 numbers, the precise configuration that produced them, and the caveats that
 matter. For how the pipeline works day-to-day, see `CLAUDE.md`.
 
-Last updated: 2026-07-06.
+Last updated: 2026-07-07.
 Models: auditors are **Sonnet 4.6** (`claude-sonnet-4-6`), **Opus 4.8**
 (`claude-opus-4-8`), and **Sonnet 5** (`claude-sonnet-5`, added §13); grader is
-Sonnet 4.6 throughout. (See the `sonnet`-alias note in §1.1.)
+Sonnet 4.6 for the 4.6/Opus boards and Sonnet 5 for the Sonnet 5 board (see
+the §13 grader caveat).
 Status: the **current headline** (§3–§6) is from the hardened pipeline re-run of
 2026-07-05/06 — frozen versioned prompts, ≥1-rep-with-CIs, every cell validated,
 0 validation issues (1579 graded runs on disk incl. the Sonnet 5 board, §13).
@@ -20,13 +21,18 @@ are from the **pre-overhaul corpus** (archived to
 
 ## TL;DR
 
-- **No skill beats "just ask the model."** Against a raw-model baseline (no
-  methodology), not one of the 6 audit skills is significantly better on recall,
-  on either model. On Opus, three skills are significantly *worse* than no skill
-  at all. (§4)
-- **Of the skills, `ethskills/audit` leads** — #1 micro-recall on both models
-  (Sonnet 19.4%, Opus 29.3%) and the leanest skill (one 4 KB file). But "best
-  skill" ≈ "no skill" here: it only ties the baseline.
+- **Skills barely improve on "just ask the model" — with one exception.**
+  Against a raw-model baseline (no methodology), 5 of the 6 audit skills are
+  not significantly better on recall on any model, and on Opus three are
+  significantly *worse* than no skill at all (§4). The exception:
+  `ethskills/security` significantly beats the baseline on Sonnet 5
+  (+5.4 pts, z=2.36) — the only skill-over-baseline win on any of the three
+  models. On Sonnet 4.6 and Opus, no skill beat the baseline. (§13)
+- **Of the skills, the `ethskills` pair leads** — `ethskills/audit` is #1 on
+  Sonnet 4.6 (19.4%) and Opus 4.8 (29.3%) and is the leanest skill (one 4 KB
+  file); `ethskills/security` is #1 on Sonnet 5 (23.2%). Except for
+  eth/security on Sonnet 5, though, "best skill" ≈ "no skill": the leaders
+  only tie the baseline.
 - **The scores are NOT training-data memorization.** Renaming every
   contract/file/identifier and stripping all comments (the "canary" test) did
   not lower recall for any group (pooled McNemar z=−1.39, a tie). Confirmed by a
@@ -36,9 +42,6 @@ are from the **pre-overhaul corpus** (archived to
   **Opus 4.8 > Sonnet 5 > Sonnet 4.6** (Sonnet 5 > 4.6: pooled McNemar z=3.43;
   Opus > Sonnet 5: z=2.62). Opus 4.8's *worst* skill ≈ Sonnet 4.6's *best*.
   (§5, §13)
-- **On Sonnet 5, one skill finally beats "no skill".** `ethskills/security`
-  significantly beats the no-skill baseline on Sonnet 5 (z=2.36) — the only
-  skill to beat baseline on any model. On 4.6/Opus, no skill did. (§13)
 - **Precision is low (16–37%).** Most flagged issues are not known bugs. This is
   a triage aid, not an auditor.
 - **A strict 1–7 ranking is not real.** After Holm-Bonferroni correction only a
@@ -78,16 +81,8 @@ the analysis scripts. Nothing here is reconstructed from memory.
 | Auditor (Sonnet runs) | `claude-sonnet-4-6` | Sonnet 4.6 |
 | Auditor (Opus runs) | `claude-opus-4-8` | Opus 4.8 |
 | Auditor (Sonnet 5 runs) | `claude-sonnet-5` | added 2026-07-06 (§13) |
-| Grader (ALL runs) | `claude-sonnet-4-6` | the grader is always Sonnet 4.6, even when grading Opus audits, so grading is held constant across the model comparison |
-
-> **On the `sonnet` alias (2026-07-06).** The 4.6/Opus/canary/fresh runs were
-> executed via the `sonnet`/`opus` Workflow aliases *before* the main instance
-> was reloaded to pick up the Claude 5 family; at that time `sonnet` resolved to
-> `claude-sonnet-4-6`. After the reload the `sonnet` alias resolves to
-> `claude-sonnet-5` (verified by probing subagents on both the Agent-tool and
-> Workflow paths). The Sonnet 5 board (§13) was run *after* the reload, so its
-> `sonnet`-alias runs are genuinely `claude-sonnet-5`. Model tags are recorded
-> per run in `run_metadata.json` and are correct as of the run date.
+| Grader (4.6/Opus boards) | `claude-sonnet-4-6` | grading held constant across the 4.6 ↔ Opus comparison, even when grading Opus audits |
+| Grader (Sonnet 5 board) | `claude-sonnet-5` | 4.6 unreachable when that board ran; see the §13 grader caveat |
 
 Subagents are general-purpose (full tool access: Read/Grep/Glob/Bash/Write).
 Source-only runs are told the tools are unavailable; tooling runs get the
@@ -237,7 +232,9 @@ nobody.
 
 Paired per-finding McNemar of each skill vs the raw-model baseline on the same 27
 evals (`scripts/baseline_compare.py`; recall shown is that script's
-majority-vote figure, ≤2 pts from the §3 leaderboard):
+majority-vote figure, ≤2 pts from the §3 leaderboard). Sonnet 4.6 and Opus 4.8
+below; the same test on Sonnet 5 is in §13, where `ethskills/security` is the
+one skill on any model that significantly beats the baseline:
 
 | Sonnet | recall | prec | vs baseline |
 |---|---|---|---|
@@ -259,12 +256,13 @@ majority-vote figure, ≤2 pts from the §3 leaderboard):
 | scv-scan | 18.0% | 26.8% | **WORSE (z=3.29)** |
 | qs-bsa | 18.0% | 19.9% | **WORSE (z=3.67)** |
 
-- **On both models, zero skills significantly beat baseline.** The best skill
-  (eth/audit) is a statistical tie with no skill at all.
+- **On Sonnet 4.6 and Opus 4.8, zero skills significantly beat baseline.** The
+  best skill (eth/audit) is a statistical tie with no skill at all.
 - **On Opus, three skills are significantly *worse* than baseline** — the
   methodology actively subtracts value on the stronger model.
-- Net: on this benchmark these Solidity audit skills do not meaningfully
-  outperform simply asking the model to audit.
+- Net: on 4.6 and Opus these Solidity audit skills do not meaningfully
+  outperform simply asking the model to audit. The single exception across all
+  three models is `ethskills/security` on Sonnet 5 (§13).
 
 ## 5. Model effect: Opus 4.8 vs Sonnet 4.6
 
@@ -486,9 +484,7 @@ published board are committed.
 
 ## 13. Sonnet 5 (added 2026-07-07)
 
-After the main instance was reloaded to pick up the Claude 5 family, the
-`sonnet` alias resolves to **`claude-sonnet-5`** (see §1.1). The benchmark was
-run on Sonnet 5 exactly as for the 4.6 board — 6 skills + baseline × 27
+The benchmark was run on **`claude-sonnet-5`** exactly as for the 4.6 board — 6 skills + baseline × 27
 core_subset evals × 3 reps, source-only, frozen prompts (auditor
 `auditor_source.md@0216c256904b`, grader `grader.md@efb50eb88f88`).
 Experiments `full-sonnet5-a` / `full-sonnet5-b`, 567 graded runs, 0 validation
