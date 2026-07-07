@@ -17,6 +17,10 @@ __pycache__/
 evals/
 results/
 
+# Third-party skill repo clones — pinned (url + commit) in skills_lock.json
+skills/
+
 # Tooling-arm venv and build artifacts
 .venv-tools/
 evals/*/build_status.json
+.cache/

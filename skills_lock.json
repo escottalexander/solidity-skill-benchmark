@@ -1,0 +1,41 @@
+{
+  "_comment": "Pinned third-party skill repos. skills/ is gitignored (each entry is a git clone); re-create with: git clone <url> skills/<name> && git -C skills/<name> checkout <commit>. Manifest: skills.json.",
+  "skills": {
+    "ethskills": {
+      "url": "https://github.com/austintgriffith/ethskills",
+      "commit": "31c60cbd90f8c1c46aa19ebf88df2ae1575fa230"
+    },
+    "hackenproof-skills": {
+      "url": "https://github.com/hackenproof-public/skills",
+      "commit": "be2f73ef6b59eac4bbbde74dc6364e550f40933a"
+    },
+    "openzeppelin-skills": {
+      "url": "https://github.com/OpenZeppelin/openzeppelin-skills",
+      "commit": "0ba03a1dae8aee52d6d945d060eceaa74f7eee24"
+    },
+    "pashov-skills": {
+      "url": "https://github.com/pashov/skills",
+      "commit": "95825b02f4f4fef33cd27918e1f56bf4a448de28"
+    },
+    "qs_skills": {
+      "url": "https://github.com/quillai-network/qs_skills",
+      "commit": "8bdd3c058704cd855ce29b8e2385708b59152606"
+    },
+    "sc-auditor": {
+      "url": "https://github.com/Archethect/sc-auditor",
+      "commit": "942cc13111cf5b0617d9de8fa4fe9bc20f1d8cc8"
+    },
+    "scv-scan": {
+      "url": "https://github.com/kadenzipfel/scv-scan",
+      "commit": "114985581450cfed35c277831a065c6478e2c328"
+    },
+    "solskill": {
+      "url": "https://github.com/Cyfrin/solskill",
+      "commit": "96ae8d3371151d067ef62c04641eaee72517f766"
+    },
+    "trailofbits-skills": {
+      "url": "https://github.com/trailofbits/skills",
+      "commit": "d7f76b532d1e4c6e7757e04d25c99ab60dd5e32c"
+    }
+  }
+}

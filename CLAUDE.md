@@ -1,254 +1,181 @@
 # Solidity Skill Benchmark
 
-Benchmarks Claude Code skills for Solidity smart contract security auditing. This agent orchestrates the entire pipeline — preparing workspaces, spawning subagents for auditing and grading, saving results, and aggregating leaderboards.
+Benchmarks Claude Code skills for Solidity smart contract security auditing. This agent orchestrates the pipeline — but ALL mechanical steps (workspaces, prompts, run dirs, validation, aggregation) are deterministic scripts. The agent's only job is spawning subagents and reacting to failures.
 
 ## Repository Structure
 
-- `evals/` — 300 eval cases (`vfp_00001` .. `vfp_00300`), each containing:
+- `evals/` — eval cases, each containing:
   - `contracts/` — Solidity source files to audit
   - `findings.json` — ground truth vulnerabilities (never shown to auditor)
   - `metadata.json` — project info, CWE tags, severity counts
-- `evals/evals.json` — registry of all 300 evals
-- `evals/core_subset.json` — curated subset of ~27 diverse evals (default for benchmarks)
-- `skills/` — Claude Code skills to benchmark
-- `skills.json` — manifest mapping skill names to SKILL.md paths; `enabled: true` for active skills
-- `agents/` — subagent prompt templates (auditor.md, grader.md)
-- `scripts/` — utility scripts (aggregate.py, discover_skills.py)
-- `results/` — output: `runs/`, `history/`, `benchmark.json`
+  - `project_lock.json` — (fresh evals only) repo URL + pinned commit + submodule pins, so tooling workspaces rebuild exactly
+- `evals/evals.json` — registry of all evals
+- `evals/core_subset.json` — curated ~27 diverse legacy evals (`vfp_*`)
+- `evals/tooling_set.json` — 23 legacy evals that compile via the scaffold harness
+- `evals/canary_set.json` — contamination canaries (`*_cn`): same code/bugs, comments stripped + contract/file names renamed (`scripts/make_canary.py`)
+- `evals/fresh_set.json` — post-cutoff evals imported from recent audits (compilable, cannot be in training data)
+- `evals/import_specs/` — one spec JSON per fresh-eval import
+- `skills/` — Claude Code skills to benchmark (third-party git clones, gitignored; pinned in `skills_lock.json`); `skills.json` — manifest (name → SKILL.md path, `enabled` flag)
+- `agents/prompts/` — **THE frozen prompt templates** (auditor_source[_baseline].md, auditor_tooling[_baseline].md, grader.md). `agents/auditor.md` + `agents/grader.md` document how to use them.
+- `scripts/` — the deterministic pipeline (see table below)
+- `results/` — `runs/`, `experiments/` (manifests + boards), `calibration/`, `history/`, `benchmark.json`
 - `site/` — leaderboard HTML (reads `site/data.json`)
 
-## How It Works (Agent-Led)
+## Reproducibility Rules (non-negotiable)
 
-This agent is the orchestrator. Instead of shell scripts calling `claude -p`, this agent:
+1. **Frozen prompts.** Subagent prompts are NEVER hand-written. `scripts/prepare_run.py` renders `agents/prompts/*.md` (strict placeholder check both ways) and saves `prompt.md` + `grader_prompt.md` into every run dir, with template versions (`<file>@<sha12>`) in `run_metadata.json`. Editing a template changes its version string; two runs are comparable iff versions match.
+2. **Deterministic prep.** Workspaces, run dirs, hashes (skill dir + contracts content), manifests, and cell files all come from `prepare_run.py`. It asserts ground truth is absent from every workspace.
+3. **Experiment manifests.** Every new run belongs to a named experiment (`results/experiments/<name>.json` lists every cell). Aggregation/analysis selects runs via manifests — never by directory-name heuristics. (Legacy pre-manifest runs keep the old heuristics in the default `aggregate.py` mode; new runs carry `experiment` in metadata and are excluded from that legacy board.)
+4. **Repetitions.** Single passes are noise (a 2nd identical pass changed ~40% of catches — FINDINGS.md §5). Default `--reps 3`; rank on rep-averaged micro-recall with the bootstrap 95% CI `aggregate.py` reports.
+5. **Validate before believing.** `scripts/validate_runs.py --experiment <name>` after every run wave; re-run only flagged cells. It checks response presence, grading schema, finding-count/id match vs ground truth, summary arithmetic, FP itemization, cross-cell contamination, and prompt provenance.
+6. **Multiple comparisons.** Pairwise skill claims must survive Holm-Bonferroni (`scripts/rank_analysis.py` does this automatically). Quote `p_holm`, not raw z.
 
-1. **Prepares a workspace** — creates a temp directory with the skill's full directory (SKILL.md + references, scripts, etc.) and the eval's contract files
-2. **Spawns an auditor subagent** — points it at the workspace and tells it to follow the skill methodology and audit the contracts using any tools it needs
-3. **Saves the audit response** — writes `response.md` and `run_metadata.json`
-4. **Spawns a grader subagent** — sends ground truth findings + audit response for evaluation
-5. **Saves the grading** — writes `grading.json` with recall/precision/F1
-6. **Aggregates** — runs `python3 scripts/aggregate.py` to update the leaderboard
+## Running an Experiment
 
-See `agents/auditor.md` and `agents/grader.md` for the subagent prompt templates.
-
-## Running a Single Eval
-
-When the user asks to run a specific eval (e.g., "run scv-scan against vfp_00001"):
-
-### Step 1: Resolve the skill
-
-Read `skills.json` to find the SKILL.md path for the given skill name. The skill directory is the parent of the SKILL.md file (e.g., `skills/scv-scan/` for `skills/scv-scan/SKILL.md`).
-
-### Step 2: Create the workspace
-
-Create an isolated temp directory with the skill's full directory tree and the eval's contracts:
+### Step 1: Prepare (deterministic)
 
 ```bash
-WORKSPACE=$(mktemp -d /tmp/eval_XXXXXX)
-cp -r skills/scv-scan/ $WORKSPACE/skill/        # Full skill dir (SKILL.md + references/, scripts/, etc.)
-cp -r evals/vfp_00001/contracts/ $WORKSPACE/contracts/   # Only contracts, never findings.json
+python3 scripts/prepare_run.py \
+  --experiment sonnet-rep3 \
+  --skills scv-scan ethskills/audit baseline \
+  --eval-set core_subset \
+  --model claude-sonnet-4-6 \
+  --tooling disabled \
+  --reps 3
 ```
 
-This gives the subagent a real filesystem to work with — it can read reference files, run scripts, use grep, or anything else the skill methodology requires.
+This creates per-cell workspaces + run dirs + rendered prompts, one `cell_<i>.json` per cell under `.cache/experiments/<name>/cells/`, and the manifest. For tooling runs use `--tooling enabled` (see Tooling Runs below). Baseline = the skill name `baseline`.
 
-### Step 3: Spawn the auditor subagent
+### Step 2: Spawn auditors (the agent's job)
 
-Build the prompt per `agents/auditor.md` and spawn:
+One auditor subagent per cell, in parallel (background Agents or a Workflow). The subagent prompt is the cell's `auditorBootstrap` string VERBATIM — it just points the agent at the run dir's `prompt.md`. Model = the experiment's model. Subagents write `response.md` directly to the run dir.
 
+After each auditor completes, record from the Agent tool's `<usage>` block into the run's `run_metadata.json`: `duration_seconds` (from `duration_ms`) and `tokens: {"total": <subagent_tokens>}`. (Cost is NOT surfaced; leave `total_cost_usd` at 0.)
+
+### Step 3: Spawn graders
+
+One grader per completed audit, prompt = the cell's `graderBootstrap` verbatim. Use the STRONGEST model available for grading — grader quality gates everything. Grader writes `grading.json` to the run dir; the orchestrator then merges in `run_metadata` (copied from `run_metadata.json`, never trusted from the grader) and `grading_meta` (`{"model": ..., "tokens": {...}}`). If grading.json is missing/unparseable: re-prompt once, else save reply to `grading_error.txt` and leave ungraded.
+
+### Step 4: Validate, re-run holes
+
+```bash
+python3 scripts/validate_runs.py --experiment sonnet-rep3
 ```
-Agent({
-  description: "Audit vfp_00001 with scv-scan",
-  model: "sonnet",
-  prompt: <constructed prompt pointing at $WORKSPACE>
-})
+Re-run only flagged cells (their cell files still exist), then re-validate.
+
+### Step 5: Aggregate & analyze
+
+```bash
+python3 scripts/aggregate.py --experiment sonnet-rep3            # board + CIs
+RANK_MODEL=claude-sonnet-4-6 python3 scripts/rank_analysis.py    # Holm-corrected pairs
 ```
-
-The subagent has full tool access (Read, Grep, Glob, Bash, Write, etc.) and works within the workspace directory. It follows the skill instructions and can use any bundled resources.
-
-### Step 4: Save the audit result
-
-Create the run directory and save files:
-```
-results/runs/<skill_dir>/<eval_id>/<YYYYMMDDTHHMMSS>/
-  response.md          — the subagent's audit text
-  run_metadata.json    — skill name, eval_id, timestamp, model
-```
-
-Skill dir uses `__` for `/` separators (e.g., `pashov-skills__solidity-auditor`).
-
-Then clean up the temp workspace: `rm -rf $WORKSPACE`
-
-### Step 5: Build the grader prompt
-
-1. Read `evals/<eval_id>/findings.json` (ground truth)
-2. Read the saved `response.md`
-3. Construct the prompt per `agents/grader.md`
-
-### Step 6: Spawn the grader subagent
-
-```
-Agent({
-  description: "Grade vfp_00001 for scv-scan",
-  model: "sonnet",
-  prompt: <constructed grading prompt>
-})
-```
-
-The grader doesn't need a workspace — it receives all data in the prompt.
-
-### Step 7: Save the grading
-
-Parse the grader's JSON response and save to `grading.json` in the run directory. Include the `run_metadata` and `grading_meta` fields for aggregate.py compatibility.
-
-### Step 8: Report results
-
-Print recall, precision, F1, and which findings were found/missed.
-
-## Running a Benchmark
-
-When the user asks to benchmark a skill (e.g., "benchmark scv-scan"):
-
-### Step 1: Select evals
-
-- Default: read `evals/core_subset.json` for the ~27 curated evals
-- The user can specify: `--sample N` (random subset), specific eval IDs, or `--all`
-
-### Step 2: Spawn auditor subagents in parallel
-
-For each eval:
-1. Create its workspace (via Bash, can do multiple in one command)
-2. Spawn an auditor subagent with `run_in_background: true`
-
-Spawn all in the same turn for maximum parallelism.
-
-### Step 3: Save results and spawn graders
-
-As each auditor completes, save its response, clean up the workspace, and spawn a grader subagent (also in background where possible).
+`aggregate.py` with no args reproduces the legacy headline board (site/data.json); `--experiment ... --publish` publishes an experiment board instead.
 
 ### Scaled runs via the Workflow tool
 
-For large matrices (many skills × evals), a deterministic `Workflow` that pipelines audit→grade per cell is far more efficient than hand-managing dozens of background `Agent` calls. Hard-won rules (a pilot run lost 7/29 cells to violating the first one):
+For large matrices, a deterministic `Workflow` that pipelines audit→grade per cell beats hand-managing dozens of background Agents. Hard-won rules (a pilot lost 7/29 cells to violating the first one):
 
-- **One cell per file — never "read a shared manifest and take index N".** Workflow scripts have no filesystem access, so subagents must read their inputs from disk. If you point every subagent at the *same* manifest array and tell it "use element N", subagents reliably grab the **wrong index** — some cells get written 2–3× and others get zero. Instead, the Bash pre-step writes one `cell_<i>.json` (a single object, not an array) per cell, and each subagent reads only its own file. (Written files stay internally consistent even under the bug — each reads workspace[j] and writes response[j] — so the failure shows up as *coverage holes*, not corruption.)
-- **Pre-step owns isolation + setup.** A Bash/Python pre-step creates each isolated workspace (skill dir + contracts, **never** `findings.json` — assert it's absent), the run dir + `run_metadata.json`, and the per-cell files. Pass only tiny data to the workflow as `args` (counts, modes, labels) — and note `args` arrives as a JSON **string**, so `JSON.parse` it in the script (`typeof args === 'string' ? JSON.parse(args) : args`).
-- **Subagents write their own outputs** (`response.md`, `grading.json`) to absolute paths from their cell file — the orchestrator never re-transcribes large reports.
-- **Always validate coverage afterward and re-run holes.** Check every cell has a non-empty `response.md` and a parseable `grading.json` (right `summary` keys). Re-run only the missing/failed cells via a small recovery workflow (same one-cell-per-file pattern). A contamination check is cheap insurance: confirm each `response.md` mentions its own eval's contract names.
+- **One cell per file — never "read a shared manifest and take index N".** Subagents reliably grab the wrong index from shared arrays; each subagent reads ONLY its own `cell_<i>.json` (prepare_run.py already emits these).
+- **Pre-step owns isolation + setup** — that is `prepare_run.py`. Pass only tiny data (counts, cells dir) to the workflow as `args`; note `args` may arrive as a JSON string (`typeof args === 'string' ? JSON.parse(args) : args`).
+- **Subagents write their own outputs** to the absolute paths in their cell file — the orchestrator never re-transcribes reports.
+- **Always validate coverage afterward** (`validate_runs.py`) **and re-run holes** via a small recovery pass over the flagged cells only.
 
-### Step 4: Aggregate
+## Tooling Runs (compile + real security tools)
 
-After all grading is complete:
-```bash
-python3 scripts/aggregate.py
-```
+The tooling arm answers "do Slither/Foundry/etc. actually help?" — it requires projects that COMPILE and subagents with FULL tool access.
 
-This produces:
-- `results/benchmark.json` — full leaderboard
-- `results/history/benchmark_<ts>.json` — historical snapshot
-- `site/data.json` — data for the web UI
+- **Toolchain**: `python3 scripts/check_tooling.py` verifies and version-stamps: forge/cast (Foundry), slither, semgrep, aderyn, echidna, medusa, halmos, crytic-compile, solc-select, solhint (venv: `.venv-tools/`, plus `~/.foundry/bin`, `~/.cargo/bin`, brew). forge + slither are required; versions are recorded into each run's metadata automatically. Mythril/Manticore are NOT installable on Python 3.14 — treat as unavailable.
+- **Which evals compile**: legacy `tooling_set.json` evals compile via the scaffold harness (`compile_eval.py`); fresh `fresh_set.json` evals compile as full pinned clones (preferred — real projects, real remappings, and post-cutoff too).
+- `prepare_run.py --tooling enabled` builds one compiling template per eval, then per-cell copies with freshly symlinked `lib/` so concurrent tool runs don't clash; a `slither.config.json` scopes analysis to in-scope sources. The rendered prompt lists tool versions and PATH.
+- **Paired analysis only**: compare tools-on vs tools-off on IDENTICAL evals (`scripts/tooling_compare.py`); pooling different eval sets is an artifact machine (FINDINGS.md §6 warning).
 
-### Step 5: Report the leaderboard
+## Contamination Control (this gates everything)
 
-Print the summary table with rank, skill, F1, recall, precision, and eval count.
+The `vfp_*` evals derive from PUBLISHED audits — models may have trained on them. Two mitigations, use both:
+
+1. **Canaries**: `evals/canary_set.json` mirrors core_subset with comments stripped and contract/file/import names renamed (findings.json renamed consistently, so grading still works). Run the same skill/model on originals vs canaries; a large recall drop = memorization. Rebuild anytime: `python3 scripts/make_canary.py --set core_subset --register`.
+2. **Fresh evals**: audits published AFTER the models' cutoffs cannot be memorized. `evals/import_specs/*.json` + `python3 scripts/import_recent_audit.py --all` clones the audited repo at the pinned commit, requires `forge build` to pass, extracts scope files into `contracts/`, and registers into `fresh_set.json`. Prefer fresh evals for all new headline claims; they also serve the tooling arm.
+
+## Grader Quality Assurance
+
+The LLM grader is the measurement instrument; its error rate bounds every conclusion.
+
+- `grading.json` must itemize false positives (`false_positive_details`, count must match) — enforced by validate_runs.py.
+- **Reliability** (same prompt, k gradings): `python3 scripts/grader_reliability.py --prepare --sample 20 --k 3`, spawn the emitted grader cells, then `--report` (percent agreement, pooled Cohen's kappa, FP spread). Run after ANY grader change.
+- **Calibration** (vs human labels): `python3 scripts/grader_calibration.py --sample 80` emits `results/calibration/labels_todo.json`; a human fills `human_found`, saves as `labels.json`, then `--report` gives grader accuracy/kappa + disagreements. Leaderboard gaps below the grader's error rate are noise.
 
 ## Reliability & Failure Handling
 
-A full benchmark spawns hundreds of auditor + grader subagents; some will fail (timeouts, crashes, malformed output). Handle this explicitly:
-
-- **Auditor failures** — if a subagent errors or returns no usable audit text, write `error.json` to the run dir (instead of `response.md`) and skip grading for that cell. `aggregate.py` already falls back to the most recent run that has a `grading.json`, so a failed re-run won't shadow an earlier success.
-- **Grader JSON extraction** — graders are told to return *only* JSON, but models often wrap it in prose or ```` ```json ```` fences. Before saving `grading.json`, extract the JSON (strip fences, take the outermost `{...}`) and validate it parses with the expected `findings`/`summary` keys. If it doesn't parse after one re-prompt, save the raw text to `grading_error.txt` and leave the cell ungraded rather than writing malformed JSON.
-- **Re-running missing cells** — after a run, diff the (skill × eval) matrix against `results/runs/` to find cells with no valid `grading.json`, and re-run only those. Don't re-run completed cells.
-- **Duration & tokens** — the Agent tool result ends with a `<usage>` block containing `subagent_tokens` and `duration_ms`. Capture both: record `duration_seconds` (from `duration_ms`) and `tokens: {"total": <subagent_tokens>}` in `run_metadata.json`. `aggregate.py` reads `tokens.total`. **Cost is NOT surfaced** (no per-token price split), so `total_cost_usd` stays `0` and the leaderboard's Cost column stays empty — that part is expected. Token count and duration *do* populate.
+- **Auditor failures** — no usable `response.md` → write `error.json` to the run dir, skip grading; validate_runs flags it for re-run.
+- **Grader JSON** — graders write the file themselves; validate_runs catches malformed/incomplete output. One re-prompt, then `grading_error.txt` + ungraded.
+- **Never write malformed grading.json** — an ungraded cell is recoverable, a corrupt one silently poisons aggregation.
 
 ## Skill Comparability (read before interpreting the leaderboard)
 
-The grader scores recall/precision against an enumerated findings list, so only **full-audit skills** (those that produce a complete vulnerability list) are directly comparable on F1. Three kinds of enabled skills are *not* apples-to-apples:
+Only **full-audit skills** (complete vulnerability list) are comparable on recall/F1:
 
-- **Full auditors** — e.g. `scv-scan`, `ethskills/audit`, `ethskills/security`, `pashov-skills/solidity-auditor`, `sc-auditor/security-auditor`, `qs_skills/behavioral-state-analysis`. Compare these head-to-head.
-- **Narrow single-category analyzers** — e.g. most `qs_skills` (reentrancy, dos-griefing, oracle-flashloan, etc.). They target one vuln class, so recall is structurally capped on mixed-finding evals. Don't rank them against full auditors.
-- **Non-enumeration skills** — e.g. `pashov-skills/x-ray` (pre-audit threat model), `qs_skills/defender` (deploy-readiness), `trailofbits/{audit-context-building,code-maturity-assessor,token-integration-analyzer}`. These don't output a vuln list and will score ≈0 recall by design.
-
-When benchmarking a mixed set, tier the leaderboard by skill type or restrict the headline board to full auditors.
-
-## Baseline Runs
-
-For baseline comparisons (no skill), create the workspace with only contracts (no `skill/` directory). Omit the skill methodology section from the auditor prompt. Use `"baseline"` as the skill name and `is_baseline: true` in metadata.
-
-## Skill Manifest (`skills.json`)
-
-Maps human-readable skill names to SKILL.md paths:
-
-```json
-{
-  "skills": {
-    "scv-scan": { "path": "skills/scv-scan/SKILL.md", "enabled": true },
-    "pashov-skills/solidity-auditor": { "path": "skills/pashov-skills/solidity-auditor/SKILL.md", "enabled": true }
-  }
-}
-```
-
-### Discover and update the manifest
-
-```bash
-python3 scripts/discover_skills.py            # list all SKILL.md files found
-python3 scripts/discover_skills.py --update   # add new discoveries to skills.json
-```
-
-Then edit `skills.json` to set `enabled: true` for skills to include.
+- **Full auditors** — `scv-scan`, `ethskills/audit`, `ethskills/security`, `pashov-skills/solidity-auditor`, `sc-auditor/security-auditor`, `qs_skills/behavioral-state-analysis`. Compare head-to-head.
+- **Narrow single-category analyzers** — most `qs_skills` (reentrancy, dos-griefing, oracle-flashloan, ...). Recall structurally capped; don't rank vs full auditors.
+- **Non-enumeration skills** — `pashov-skills/x-ray`, `qs_skills/defender`, `trailofbits/{audit-context-building,code-maturity-assessor,token-integration-analyzer}`. Score ≈0 recall by design.
 
 ## Naming Convention
 
-- Skill names use `/` as separator (e.g. `pashov-skills/solidity-auditor`)
-- Filesystem directories use `__` instead (e.g. `results/runs/pashov-skills__solidity-auditor/`)
-- The human-readable name and original SKILL.md path are recorded in `run_metadata.json`
+- Skill names use `/` (e.g. `pashov-skills/solidity-auditor`); filesystem dirs use `__`.
+- Run dirs: `results/runs/<skill_dir>/<eval_id>/<ts>r<rep>/` (legacy suffixes: `D`/`E` tooling A/B, `P2` pass-2, `B*` baseline).
 
 ## Results Format
 
-### run_metadata.json
+### run_metadata.json (written by prepare_run.py; agent appends duration/tokens)
 ```json
 {
-  "skill": "scv-scan",
-  "skill_path": "skills/scv-scan/SKILL.md",
-  "eval_id": "vfp_00001",
-  "timestamp": "20260408T120000",
-  "is_baseline": false,
-  "model": "sonnet"
+  "skill": "scv-scan", "skill_path": "skills/scv-scan/SKILL.md",
+  "eval_id": "vfp_00001", "timestamp": "20260705T101500r1",
+  "is_baseline": false, "model": "claude-sonnet-4-6",
+  "tooling": "disabled", "rep": 1, "experiment": "sonnet-rep3",
+  "prompt_version": "auditor_source.md@2dff46521684",
+  "grader_prompt_version": "grader.md@c0594ed83585",
+  "skill_sha": "ae93d2ae98b99c99", "contracts_sha": "f1a3e810aab07f67",
+  "duration_seconds": 312, "tokens": {"total": 451234}
 }
 ```
 
-### grading.json
+### grading.json (grader-written; orchestrator merges run_metadata + grading_meta)
 ```json
 {
-  "findings": [
-    {"id": 1, "title": "...", "severity": "High", "found": true, "evidence": "..."}
-  ],
+  "findings": [{"id": 0, "title": "...", "severity": "High", "found": true, "evidence": "..."}],
+  "false_positive_details": [{"title": "...", "claimed_severity": "High", "quote": "...", "why_unmatched": "..."}],
   "false_positives": 2,
-  "summary": {
-    "total": 8, "found": 5, "missed": 3,
-    "recall": 0.625, "false_positives": 2, "precision": 0.714
-  },
-  "run_metadata": { "...same as run_metadata.json..." },
-  "grading_meta": { "model": "sonnet" }
+  "summary": {"total": 8, "found": 5, "missed": 3, "recall": 0.625, "false_positives": 2, "precision": 0.714},
+  "run_metadata": {"...": "copied from run_metadata.json"},
+  "grading_meta": {"model": "claude-opus-4-8", "tokens": {"total": 98765}}
 }
 ```
 
 ## Utility Scripts
 
-These scripts remain useful as helpers:
-
 | Script | Purpose |
 |--------|---------|
-| `scripts/aggregate.py` | Collect all grading.json files, compute stats, produce leaderboard |
-| `scripts/discover_skills.py` | Scan skills/ for SKILL.md files, update skills.json |
-| `scripts/select_core_subset.py` | Select diverse eval subset (already run) |
-| `scripts/import_forge_curated.py` | Import FORGE-Curated data into evals/ (already run) |
-| `scripts/grade.py` | Standalone grading via `claude -p` (legacy fallback) |
-| `scripts/run_eval.py` | Standalone eval via `claude -p` (legacy fallback) |
-| `scripts/run_benchmark.sh` | Shell-based benchmark orchestration (legacy fallback) |
+| `scripts/prepare_run.py` | Deterministic experiment prep: workspaces, prompts, manifests, cells |
+| `scripts/render_prompt.py` | Strict template renderer + version hashes (used by prepare_run) |
+| `scripts/validate_runs.py` | Post-run integrity checks; lists cells to re-run |
+| `scripts/aggregate.py` | Leaderboard; `--experiment` = manifest-selected, rep-averaged, bootstrap CIs |
+| `scripts/rank_analysis.py` | Per-model CIs + Holm-corrected paired tests (macro t + per-finding McNemar) |
+| `scripts/check_tooling.py` | Verify + version-stamp the security toolchain |
+| `scripts/make_canary.py` | Build contamination-canary eval variants |
+| `scripts/import_recent_audit.py` | Import post-cutoff audits as fresh compilable evals |
+| `scripts/grader_reliability.py` | Repeat-grading agreement (kappa) |
+| `scripts/grader_calibration.py` | Grader accuracy vs human labels |
+| `scripts/baseline_compare.py` / `model_compare.py` / `multipass_analysis.py` / `tooling_compare.py` | Focused paired analyses (see FINDINGS.md §10) |
+| `scripts/compile_eval.py` / `discover_compilable.py` | Scaffold harness for legacy evals |
+| `scripts/discover_skills.py` | Scan skills/ for SKILL.md, update skills.json |
+| `scripts/token_usage.py` / `persist_token_usage.py` | Token reconstruction from transcripts |
+| legacy: `run_eval.py`, `grade.py`, `run_benchmark.sh`, `setup_*.py` | Superseded by prepare_run.py; kept for provenance |
 
 ## Key Design Principles
 
-1. **Real workspace** — Each auditor subagent gets a temp directory with the full skill tree (SKILL.md + references, scripts, etc.) and the contracts. It can use any tool — read files, run scripts, grep, bash — just like a real user would.
-2. **Full tool access** — Subagents are general-purpose (not restricted to Read/Glob/Grep). If a skill says "run this script" or "use this tool", the subagent can do it.
-3. **Isolation** — The workspace contains only the skill and contracts. Findings are never copied in. The subagent is instructed to work only within the workspace.
-4. **Parallelism** — Multiple auditor/grader subagents can run concurrently using `run_in_background`.
-5. **Compatibility** — Results use the same directory structure and JSON formats as the legacy scripts, so aggregate.py works unchanged.
-6. **Skill injection via workspace** — The skill's full directory is copied into the workspace, so all bundled resources (reference docs, scripts, assets) are available — not just the SKILL.md file.
+1. **Real workspace** — each auditor gets a real filesystem: full skill tree + contracts (or a compiling project). Any tool, any script.
+2. **Full tool access** — subagents are general-purpose; tooling runs additionally get the whole security toolchain on PATH.
+3. **Isolation** — workspace contains ONLY skill + code. prepare_run.py asserts ground truth is absent.
+4. **Determinism everywhere but the model** — prompts, workspaces, selection, aggregation are all scripted and hashed; the only nondeterminism left is the model itself, which is what repetitions + CIs measure.
+5. **Parallelism** — auditors/graders run concurrently (background Agents or Workflow).
+6. **Compatibility** — legacy result formats still aggregate; new fields are additive.

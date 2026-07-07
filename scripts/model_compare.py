@@ -5,7 +5,11 @@ Reports, for each model: micro-averaged recall (found/total findings) per skill
 with Wilson 95% CIs, ranked. Then a paired per-finding McNemar test (sonnet vs
 opus) per skill, which answers "did switching models significantly change what
 got caught," controlling for which findings are hard."""
-import json, os, math
+import json, os, math, sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_select as rsel
 
 PROJ = "/Users/elliott/dev/solidity-skill-benchmark"
 SKILLS = ["scv-scan", "ethskills__audit", "ethskills__security",
@@ -16,23 +20,6 @@ SHORT = {"scv-scan": "scv-scan", "ethskills__audit": "eth/audit",
          "sc-auditor__security-auditor": "sc-auditor", "qs_skills__behavioral-state-analysis": "qs-bsa"}
 CORE = [e["eval_id"] for e in json.load(open(f"{PROJ}/evals/core_subset.json"))["evals"]]
 MODELS = {"sonnet": "claude-sonnet-4-6", "opus": "claude-opus-4-8"}
-
-def grading_for(sk, ev, model_id):
-    d = f"{PROJ}/results/runs/{sk}/{ev}"
-    if not os.path.isdir(d): return None
-    for run in sorted(os.listdir(d), reverse=True):
-        gp = os.path.join(d, run, "grading.json")
-        if not os.path.exists(gp): continue
-        try: g = json.load(open(gp))
-        except: continue
-        m = g.get("run_metadata", {}).get("model")
-        if not m:
-            mf = os.path.join(d, run, "run_metadata.json")
-            if os.path.exists(mf):
-                try: m = json.load(open(mf)).get("model")
-                except: m = None
-        if m == model_id: return g
-    return None
 
 def wilson(k, n, z=1.96):
     if n == 0: return (0, 0)
@@ -46,12 +33,13 @@ found = {m: {} for m in MODELS}
 fp = {m: {} for m in MODELS}
 for mk, mid in MODELS.items():
     for sk in SKILLS:
-        fmap = {}; tfp = 0
+        fmap = {}; tfp = 0.0
         for ev in CORE:
-            g = grading_for(sk, ev, mid)
-            if g is None: continue
-            for f in g["findings"]: fmap[(ev, f["id"])] = bool(f["found"])
-            tfp += g["summary"].get("false_positives", 0)
+            gs = rsel.cell_gradings(sk, ev, model=mid)
+            if not gs: continue
+            for fid, v in rsel.majority_fmap(gs).items():
+                fmap[(ev, fid)] = v
+            tfp += rsel.mean_summary(gs)["false_positives"]
         found[mk][sk] = fmap; fp[mk][sk] = tfp
 
 T = len(found["sonnet"][SKILLS[0]])  # total findings (same set both models)

@@ -1,138 +1,69 @@
 # Auditor Subagent
 
-This file is a reference for the orchestrating agent. It describes how to prepare a workspace and spawn an auditor subagent.
+Reference for the orchestrating agent: how auditor subagents are prepared and spawned.
 
-## When to spawn
+## The frozen-prompt rule
 
-Spawn one auditor subagent per (skill, eval) pair. Multiple auditors can run in parallel for different evals.
+**Never hand-write or paraphrase an auditor prompt.** The exact prompts are
+frozen templates in `agents/prompts/`:
+
+| Template | Used for |
+|---|---|
+| `auditor_source.md` | skill run, source-only (contracts don't compile) |
+| `auditor_source_baseline.md` | no-skill baseline, source-only |
+| `auditor_tooling.md` | skill run, compiling project + security tools |
+| `auditor_tooling_baseline.md` | no-skill baseline, compiling project + tools |
+
+`scripts/prepare_run.py` renders them deterministically (via
+`scripts/render_prompt.py`), saves the rendered prompt as `prompt.md` in each
+run directory, and records the template version
+(`<file>@<sha256[:12]>`) in `run_metadata.json`. Any two runs can therefore be
+proven prompt-identical. Editing a template changes its version string — old
+runs stay attributable to the exact prompt they used.
 
 ## Workspace setup
 
-Before spawning the subagent, the orchestrating agent must create an isolated workspace directory containing the files the auditor needs. This is critical — the subagent needs real files on disk so it can use any tool (Read, Grep, Glob, Bash, etc.) including running scripts or tools that the skill might reference.
+`prepare_run.py` owns this — do not build workspaces by hand. Per cell it:
 
-### Step 1: Create the workspace
+1. creates a temp workspace with `skill/` (full skill directory; omitted for
+   baseline) and either `contracts/` (source-only) or `project/` (a compiling
+   Foundry project with `lib/` symlinked per cell so concurrent tool runs don't
+   clash)
+2. **asserts `findings.json` / `metadata.json` are absent** from the workspace
+3. creates the run dir with `run_metadata.json` (model, rep, experiment,
+   prompt versions, skill + contracts content hashes, tool versions for the
+   tooling arm), `prompt.md`, and `grader_prompt.md`
+4. writes one `cell_<i>.json` per cell (one-cell-per-file — see CLAUDE.md)
+
+## Spawning
+
+Spawn one auditor per cell, passing the cell's `auditorBootstrap` string as the
+subagent prompt VERBATIM:
+
+```
+Agent({
+  description: "Audit {eval_id} ({experiment})",
+  model: <the model recorded in run_metadata.json>,
+  prompt: cell.auditorBootstrap   // "Read the file .../prompt.md ... follow exactly"
+})
+```
+
+- **subagent_type**: omit (general-purpose, full tool access)
+- The auditor writes its report directly to the run dir's `response.md`
+  (the path is baked into the rendered prompt), so the orchestrator never
+  re-transcribes reports.
+
+## Failure handling
+
+If a subagent errors or produces no usable `response.md`, write `error.json`
+to the run dir and skip grading for that cell. Then find and re-run holes with:
 
 ```bash
-WORKSPACE=$(mktemp -d /tmp/eval_XXXXXX)
+python3 scripts/validate_runs.py --experiment <name>
 ```
 
-### Step 2: Copy the full skill directory
+## Result capture
 
-Copy the entire skill directory (not just SKILL.md) so that reference files, scripts, and any other bundled resources are available:
-
-```bash
-# e.g., for scv-scan, copy skills/scv-scan/ → $WORKSPACE/skill/
-cp -r <skill_directory>/ $WORKSPACE/skill/
-```
-
-The skill directory is the parent of the SKILL.md file. For example, if the SKILL.md is at `skills/scv-scan/SKILL.md`, copy `skills/scv-scan/` to `$WORKSPACE/skill/`.
-
-For baseline runs (no skill), skip this step.
-
-### Step 3: Copy the contracts
-
-```bash
-cp -r evals/<eval_id>/contracts/ $WORKSPACE/contracts/
-```
-
-**Never copy findings.json or metadata.json** — the auditor must not see ground truth.
-
-### Resulting workspace layout
-
-```
-$WORKSPACE/
-├── skill/              # Full skill directory (SKILL.md + references/, scripts/, etc.)
-│   ├── SKILL.md
-│   ├── references/     # If the skill has them
-│   └── scripts/        # If the skill has them
-└── contracts/          # Solidity files to audit
-    ├── Contract1.sol
-    ├── Contract2.sol
-    └── ...
-```
-
-## How to build the prompt
-
-The prompt tells the subagent where files are and what to do. It should reference paths relative to the workspace.
-
-### Prompt template
-
-```
-You are performing a security audit of Solidity smart contracts.
-
-Your working directory is {WORKSPACE}.
-
-{IF_NOT_BASELINE}
-## Your Audit Methodology
-
-Read and follow the skill instructions at `skill/SKILL.md`. This defines your audit methodology, including any reference files or scripts you should use. All skill resources (references, scripts, etc.) are in the `skill/` directory.
-{END_IF}
-
-{IF_BASELINE}
-## Your Audit Approach
-
-You have no specific methodology to follow. Use your best judgment to audit the contracts.
-{END_IF}
-
-## Contracts to Audit
-
-The Solidity contracts to audit are in the `contracts/` directory:
-{FILE_LIST}
-
-## Task
-
-Read and analyze each contract. Identify all security vulnerabilities you can find. For each vulnerability, provide:
-
-1. **Title** — A clear, descriptive name
-2. **Severity** — Critical, High, Medium, Low, or Informational
-3. **Description** — What the vulnerability is and why it matters
-4. **Location** — The affected file(s) and function(s)/line(s)
-5. **Recommendation** — How to fix it
-
-Focus on real, exploitable vulnerabilities — not gas optimizations, style issues, or informational notes. Be thorough and systematic.
-
-## Environment Constraints
-
-This is a source-reading audit. The contracts have unresolved imports (OpenZeppelin, etc.), no installed dependencies, and no build setup, so **they will not compile**. Static-analysis tools (Slither, Mythril, Semgrep, solc, Aderyn, Echidna, Halmos) are **not installed**. Do not attempt to install tools, fetch dependencies, or compile — audit by reading the source directly. If the skill methodology calls for a tool you cannot run, apply the equivalent reasoning manually.
-
-## Output
-
-Write your finished audit report to the file `{WORKSPACE}/response.md` (use the Write tool). The report file must contain ONLY the report — start directly with the title or first finding, with no scratch-reasoning preamble, no "let me analyze" recap, and no truncation; include every finding in full. After writing the file, reply with a single short confirmation line (e.g. "Wrote N findings to response.md"). Your reply text is NOT the report — the saved file is.
-
-(Writing to a file instead of returning the report keeps the orchestrator from having to re-transcribe long reports, which is essential at benchmark scale. The orchestrator copies `{WORKSPACE}/response.md` into the run directory verbatim.)
-
-IMPORTANT: Only work within {WORKSPACE}. Do not access files outside this directory.
-```
-
-## Subagent configuration
-
-- **subagent_type**: omit (use default general-purpose agent — it has access to all tools including Bash, Read, Write, Glob, Grep)
-- **model**: use `sonnet` for cost efficiency, or match the model being benchmarked
-- **description**: `"Audit {eval_id} with {skill_name}"`
-- **prompt**: The filled-in template above
-
-## What to do with the result
-
-The subagent returns its audit findings as text. Save this to:
-```
-results/runs/{skill_dir_name}/{eval_id}/{timestamp}/response.md
-```
-
-Also save `run_metadata.json` with:
-```json
-{
-  "skill": "<skill_name>",
-  "skill_path": "<relative path to SKILL.md>",
-  "eval_id": "<eval_id>",
-  "timestamp": "<YYYYMMDDTHHMMSS>",
-  "is_baseline": false,
-  "model": "<model used>"
-}
-```
-
-## Cleanup
-
-After saving the result, remove the temp workspace:
-```bash
-rm -rf $WORKSPACE
-```
+The Agent tool result ends with a `<usage>` block. Append to the cell's
+`run_metadata.json`: `duration_seconds` (from `duration_ms`) and
+`tokens: {"total": <subagent_tokens>}`.

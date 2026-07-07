@@ -24,8 +24,7 @@ import tempfile
 from pathlib import Path
 
 PROJ = Path(__file__).resolve().parent.parent
-SCRATCH = Path(os.environ.get("TOOLING_SCRATCH",
-              "/private/tmp/claude-501/-Users-elliott-dev-solidity-skill-benchmark/02e0cd49-0bf6-4ff7-afe2-8ca964942215/scratchpad"))
+SCRATCH = Path(os.environ.get("TOOLING_SCRATCH", str(PROJ / ".cache" / "tooling")))
 LIB_CACHE = SCRATCH / "lib_cache"
 
 # dep name -> (git url, {version_key: tag})
