@@ -201,8 +201,10 @@
     let SORT = { key: 'recall', dir: 'desc' };
     let FILTER = 'all';
 
-    const modelName = (e) => e.model && e.model.includes('opus') ? 'Opus'
-        : e.model && e.model.includes('sonnet') ? 'Sonnet' : (e.model || '-');
+    const modelName = (e) => !e.model ? '-'
+        : e.model.includes('opus') ? 'Opus 4.8'
+        : e.model.includes('sonnet-5') ? 'Sonnet 5'
+        : e.model.includes('sonnet') ? 'Sonnet 4.6' : e.model;
     const tokFmt = (t) => t == null ? '-'
         : t >= 1e6 ? (t/1e6).toFixed(2) + 'M' : (t/1e3).toFixed(0) + 'K';
 
@@ -215,7 +217,7 @@
         get:e=>e.skill.toLowerCase(), cell:e=> e.is_baseline
             ? `<strong>${e.skill}</strong> <span style="color:var(--text-muted)">(no skill)</span>`
             : `<strong>${e.skill}</strong>` },
-      { key:'model', label:'Model', dir:'asc', title:"Model that ran the audit: Claude Sonnet 4.6 or Opus 4.8.",
+      { key:'model', label:'Model', dir:'asc', title:"Model that ran the audit: Claude Sonnet 4.6, Sonnet 5, or Opus 4.8.",
         get:e=>modelName(e), cell:e=>`<span class="metric">${modelName(e)}</span>` },
       { key:'recall', label:'Bug Catch Rate', dir:'desc', title:"Of the known bugs in the code, the share this skill actually caught: found / total, pooled across all 167 findings. Higher is better. (Technical name: recall.)",
         get:e=>e.recall.mean, cell:e=>renderBar(e.recall.mean) },
@@ -259,7 +261,7 @@
     function renderControls() {
         const btn = (v, l) => `<button class="filter-btn ${FILTER===v?'active':''}" onclick="setFilter('${v}')">${l}</button>`;
         document.getElementById('controls').innerHTML =
-            `<span class="lbl">Model:</span>${btn('all','All')}${btn('sonnet','Sonnet')}${btn('opus','Opus')}`
+            `<span class="lbl">Model:</span>${btn('all','All')}${btn('sonnet 4.6','Sonnet 4.6')}${btn('sonnet 5','Sonnet 5')}${btn('opus 4.8','Opus 4.8')}`
             + `<span class="lbl" style="margin-left:1rem">Click a column header to sort &middot; hover for definitions</span>`;
     }
 
