@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-07T07:00:12.346568Z",
+  "generated_at": "2026-07-07T15:24:16.440616Z",
   "experiment": "full-sonnet-a+full-sonnet-b+full-opus+full-sonnet5-a+full-sonnet5-b",
   "total_skills": 21,
   "total_evals_available": 331,
@@ -41,12 +41,18 @@
       "found": 49.0,
       "total": 167,
       "false_positives": 160.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 15501008,
+      "tokens_per_audit": 574111,
+      "tokens_per_finding": 316347,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 574111.4074,
+        "stddev": 362814.3754,
+        "min": 232450,
+        "max": 1642550,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -574,12 +580,18 @@
       "found": 48.0,
       "total": 167,
       "false_positives": 148.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 8957527,
+      "tokens_per_audit": 331760,
+      "tokens_per_finding": 186615,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 331760.2593,
+        "stddev": 273685.2126,
+        "min": 154268,
+        "max": 1416226,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -1107,12 +1119,18 @@
       "found": 44.0,
       "total": 167,
       "false_positives": 164.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 12309233,
+      "tokens_per_audit": 455898,
+      "tokens_per_finding": 279755,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 455897.5185,
+        "stddev": 346391.007,
+        "min": 207505,
+        "max": 1769703,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -1640,12 +1658,18 @@
       "found": 41.0,
       "total": 167,
       "false_positives": 124.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 27537899,
+      "tokens_per_audit": 1019922,
+      "tokens_per_finding": 671656,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1019922.1852,
+        "stddev": 624635.1668,
+        "min": 285462,
+        "max": 3030404,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -2173,12 +2197,18 @@
       "found": 38.67,
       "total": 167,
       "false_positives": 75.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 71121010,
+      "tokens_per_audit": 889013,
+      "tokens_per_finding": 658528,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 889012.625,
+        "stddev": 584661.5339,
+        "min": 372428,
+        "max": 3734862,
+        "n": 80
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -2706,12 +2736,18 @@
       "found": 35.67,
       "total": 167,
       "false_positives": 53.67,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 249707375,
+      "tokens_per_audit": 3121342,
+      "tokens_per_finding": 2333714,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 3121342.1875,
+        "stddev": 1292707.5161,
+        "min": 714158,
+        "max": 8629827,
+        "n": 80
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -3239,12 +3275,18 @@
       "found": 35.33,
       "total": 167,
       "false_positives": 83.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 98318906,
+      "tokens_per_audit": 1244543,
+      "tokens_per_finding": 936371,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1244543.1139,
+        "stddev": 869756.2867,
+        "min": 348656,
+        "max": 6069663,
+        "n": 79
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -3772,12 +3814,18 @@
       "found": 34.0,
       "total": 167,
       "false_positives": 95.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 39230242,
+      "tokens_per_audit": 1452972,
+      "tokens_per_finding": 1153831,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1452971.9259,
+        "stddev": 513554.1896,
+        "min": 397206,
+        "max": 2830642,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -4305,12 +4353,18 @@
       "found": 33.33,
       "total": 167,
       "false_positives": 67.67,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 138167322,
+      "tokens_per_audit": 1771376,
+      "tokens_per_finding": 1469865,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1771375.9231,
+        "stddev": 1112911.3329,
+        "min": 419540,
+        "max": 4924366,
+        "n": 78
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -4838,12 +4892,18 @@
       "found": 32.33,
       "total": 167,
       "false_positives": 161.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 23116102,
+      "tokens_per_audit": 285384,
+      "tokens_per_finding": 238310,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 285383.9753,
+        "stddev": 174225.7412,
+        "min": 127841,
+        "max": 933279,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -5371,12 +5431,18 @@
       "found": 30.0,
       "total": 167,
       "false_positives": 121.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 12591878,
+      "tokens_per_audit": 466366,
+      "tokens_per_finding": 419729,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 466365.8519,
+        "stddev": 321519.9763,
+        "min": 196752,
+        "max": 1708705,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -5904,12 +5970,18 @@
       "found": 30.0,
       "total": 167,
       "false_positives": 82.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 31011896,
+      "tokens_per_audit": 1148589,
+      "tokens_per_finding": 1033730,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1148588.7407,
+        "stddev": 517888.7613,
+        "min": 408790,
+        "max": 3081810,
+        "n": 27
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -6437,12 +6509,18 @@
       "found": 29.67,
       "total": 167,
       "false_positives": 68.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 41772158,
+      "tokens_per_audit": 515706,
+      "tokens_per_finding": 469350,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 515705.6543,
+        "stddev": 369483.6978,
+        "min": 240425,
+        "max": 1938872,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -6970,12 +7048,18 @@
       "found": 29.33,
       "total": 167,
       "false_positives": 138.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 35390357,
+      "tokens_per_audit": 436918,
+      "tokens_per_finding": 402163,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 436917.9877,
+        "stddev": 559513.2724,
+        "min": 162781,
+        "max": 4731360,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -7503,12 +7587,18 @@
       "found": 29.0,
       "total": 167,
       "false_positives": 138.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 15788179,
+      "tokens_per_audit": 194916,
+      "tokens_per_finding": 181473,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 194915.7901,
+        "stddev": 152968.4077,
+        "min": 94173,
+        "max": 841772,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -8036,12 +8126,18 @@
       "found": 28.67,
       "total": 167,
       "false_positives": 132.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 22268824,
+      "tokens_per_audit": 274924,
+      "tokens_per_finding": 258940,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 274923.7531,
+        "stddev": 194998.8037,
+        "min": 146998,
+        "max": 1000769,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -8569,12 +8665,18 @@
       "found": 28.33,
       "total": 167,
       "false_positives": 68.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 59843406,
+      "tokens_per_audit": 748043,
+      "tokens_per_finding": 704040,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 748042.575,
+        "stddev": 435753.4627,
+        "min": 339170,
+        "max": 2246970,
+        "n": 80
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -9102,12 +9204,18 @@
       "found": 26.67,
       "total": 167,
       "false_positives": 139.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 45136844,
+      "tokens_per_audit": 557245,
+      "tokens_per_finding": 564211,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 557244.9877,
+        "stddev": 199054.8533,
+        "min": 153733,
+        "max": 1256034,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -9635,12 +9743,18 @@
       "found": 25.67,
       "total": 167,
       "false_positives": 119.33,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 21038474,
+      "tokens_per_audit": 259734,
+      "tokens_per_finding": 273227,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 259734.2469,
+        "stddev": 168270.7885,
+        "min": 114439,
+        "max": 831873,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -10168,12 +10282,18 @@
       "found": 25.67,
       "total": 167,
       "false_positives": 52.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 105179759,
+      "tokens_per_audit": 1348458,
+      "tokens_per_finding": 1402397,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1348458.4487,
+        "stddev": 859456.8973,
+        "min": 491995,
+        "max": 4709736,
+        "n": 78
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",
@@ -10701,12 +10821,18 @@
       "found": 21.33,
       "total": 167,
       "false_positives": 69.0,
-      "tokens_total": null,
-      "tokens_per_audit": null,
-      "tokens_per_finding": null,
+      "tokens_total": 141144571,
+      "tokens_per_audit": 1742526,
+      "tokens_per_finding": 2205384,
       "duration": null,
       "cost_usd": null,
-      "tokens": null,
+      "tokens": {
+        "mean": 1742525.5679,
+        "stddev": 1754068.1291,
+        "min": 307592,
+        "max": 9632829,
+        "n": 81
+      },
       "per_eval": [
         {
           "eval_id": "vfp_00005",

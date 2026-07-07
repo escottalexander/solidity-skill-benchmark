@@ -377,6 +377,20 @@ per audit averaged over 27 evals. "peak" = high-water context in a single turn;
 - **The winner is the leanest:** eth/audit = best recall, smallest skill (4 KB),
   lowest cost. More skill machinery did not buy accuracy.
 
+**Post-overhaul boards (added 2026-07-07).** The current 3-model leaderboard
+carries token columns again: `scripts/backfill_tokens.py` reconstructs each
+run's auditor total from the workflow transcripts and writes it into the run's
+metadata; `aggregate.py` derives tok/audit and tok/find from those per-run
+values. Where a cell was re-run, the recorded tokens are those of the attempt
+whose report was actually graded (the latest `response.md` writer) — retry
+waste isn't charged to the skill. Coverage: 1312/1323 board runs (11 Sonnet 5
+runs have no surviving transcript). Two observations from the restored
+numbers: per-audit cost rises with model strength (baseline: 195K on
+Sonnet 4.6 → 332K on Opus 4.8 → 516K on Sonnet 5 — Sonnet 5 spends 2–5× more
+tokens per audit than 4.6 across skills), and pashov is the heaviest skill on
+every model (3.1M/audit on Sonnet 5) while the eth skills stay mid-cost at the
+top of the recall board.
+
 ## 10. Caveats & limitations
 
 - **Low precision (16–37%).** Most flags are not known bugs; heavy human triage

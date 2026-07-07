@@ -168,7 +168,8 @@ Only **full-audit skills** (complete vulnerability list) are comparable on recal
 | `scripts/baseline_compare.py` / `model_compare.py` / `multipass_analysis.py` / `tooling_compare.py` | Focused paired analyses (see FINDINGS.md §10) |
 | `scripts/compile_eval.py` / `discover_compilable.py` | Scaffold harness for legacy evals |
 | `scripts/discover_skills.py` | Scan skills/ for SKILL.md, update skills.json |
-| `scripts/token_usage.py` / `persist_token_usage.py` | Token reconstruction from transcripts |
+| `scripts/token_usage.py` / `persist_token_usage.py` | Token reconstruction from transcripts (legacy board) |
+| `scripts/backfill_tokens.py` | Backfill per-run auditor tokens from transcripts into run metadata (`--experiment`, repeatable) |
 | legacy: `run_eval.py`, `grade.py`, `run_benchmark.sh`, `setup_*.py` | Superseded by prepare_run.py; kept for provenance |
 
 ## Key Design Principles

@@ -230,6 +230,8 @@ def aggregate(gradings: list, experiment=None) -> dict:
 
         recalls, precisions, f1s = [], [], []
         durations, costs, total_tokens_list = [], [], []
+        tok_run_sum = tok_run_found = 0.0
+        tok_run_n = 0
         models_seen = set()
         per_eval = []
         found_sum = total_sum = fp_sum = 0.0
@@ -266,12 +268,15 @@ def aggregate(gradings: list, experiment=None) -> dict:
                 model = meta.get("model", "")
                 if model:
                     models_seen.add(model)
-                tokens = meta.get("tokens", {})
+                tokens = meta.get("tokens") or {}
                 tok_total = tokens.get("total", 0) or (
                     tokens.get("input", 0) + tokens.get("output", 0)
                     + tokens.get("cache_read", 0) + tokens.get("cache_creation", 0))
                 if tok_total:
                     total_tokens_list.append(tok_total)
+                    tok_run_sum += tok_total
+                    tok_run_found += summary.get("found", 0)
+                    tok_run_n += 1
 
             total = max(totals) if totals else 0
             found_mean = _mean(cfound)
@@ -333,8 +338,18 @@ def aggregate(gradings: list, experiment=None) -> dict:
         # finding caught (lower = cheaper to surface a known bug).
         tok = tok_map.get(f"{skill_name.replace('/', '__')}|{group_model}", {})
         tok_total = tok.get("sum_total", 0)
-        tok_per_finding = round(tok_total / found_sum) if (tok_total and found_sum) else None
-        tok_per_audit = round(tok_total / tok["n"]) if tok.get("n") else None
+        if tok_total:
+            tok_per_finding = round(tok_total / found_sum) if found_sum else None
+            tok_per_audit = round(tok_total / tok["n"]) if tok.get("n") else None
+        else:
+            # Fall back to per-run tokens from run_metadata (recorded by the
+            # orchestrator or reconstructed by scripts/backfill_tokens.py).
+            # Numerator and denominator both range over the token-covered runs
+            # only, so partial transcript coverage doesn't skew the ratio.
+            tok_total = round(tok_run_sum) or None
+            tok_per_audit = round(tok_run_sum / tok_run_n) if tok_run_n else None
+            tok_per_finding = (round(tok_run_sum / tok_run_found)
+                               if (tok_run_sum and tok_run_found) else None)
 
         entry = {
             "skill": skill_name,
