@@ -400,8 +400,10 @@ whose report was actually graded (the latest `response.md` writer) — retry
 waste isn't charged to the skill. Coverage: 1312/1323 board runs (11 Sonnet 5
 runs have no surviving transcript). Two observations from the restored
 numbers: per-audit cost rises with model strength (baseline: 195K on
-Sonnet 4.6 → 332K on Opus 4.8 → 516K on Sonnet 5 — Sonnet 5 spends 2–5× more
-tokens per audit than 4.6 across skills), and pashov is the heaviest skill on
+Sonnet 4.6 → 332K on Opus 4.8 → 516K on Sonnet 5 — Sonnet 5 spends 2.6–5.6×
+more tokens per audit than 4.6 on six of the seven setups; the exception is
+scv-scan, the 4.6 board's most expensive, which got slightly cheaper at
+0.8×), and pashov is the heaviest skill on
 every model (3.1M/audit on Sonnet 5) while the eth skills stay mid-cost at the
 top of the recall board.
 
